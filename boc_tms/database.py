@@ -249,3 +249,62 @@ def seed_if_empty():
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 appts,
             )
+
+#READ HELPERS (RETURN DATAFRAMES)
+def get_drivers(status: str | None = None) -> pd.DataFrame:
+    conn = get_connection()
+    q = "SELECT * FROM drivers"
+    params = ()
+    if status:
+        q += " WHERE status = ?"
+        params = (status,)
+    df = pd.read_sql_query(q, conn, params=params)
+    conn.close()
+    return df
+
+
+def get_vehicles(status: str | None = None) -> pd.DataFrame:
+    conn = get_connection()
+    q = "SELECT * FROM vehicles"
+    params = ()
+    if status:
+        q += " WHERE status = ?"
+        params = (status,)
+    df = pd.read_sql_query(q, conn, params=params)
+    conn.close()
+    return df
+
+
+def get_departments() -> pd.DataFrame:
+    conn = get_connection()
+    df = pd.read_sql_query("SELECT * FROM departments", conn)
+    conn.close()
+    return df
+
+
+def get_appointments(date_from: str | None = None, date_to: str | None = None) -> pd.DataFrame:
+    conn = get_connection()
+    q = """
+    SELECT a.id, a.appt_date, a.start_time, a.end_time,
+           d.id AS driver_id, d.name AS driver_name,
+           v.id AS vehicle_id, v.plate_no, v.vehicle_type,
+           dep.id AS department_id, dep.name AS department_name,
+           a.purpose, a.status, a.created_by, a.created_at
+    FROM appointments a
+    JOIN drivers d ON d.id = a.driver_id
+    JOIN vehicles v ON v.id = a.vehicle_id
+    JOIN departments dep ON dep.id = a.department_id
+    """
+    clauses, params = [], []
+    if date_from:
+        clauses.append("a.appt_date >= ?")
+        params.append(date_from)
+    if date_to:
+        clauses.append("a.appt_date <= ?")
+        params.append(date_to)
+    if clauses:
+        q += " WHERE " + " AND ".join(clauses)
+    q += " ORDER BY a.appt_date, a.start_time"
+    df = pd.read_sql_query(q, conn, params=params)
+    conn.close()
+    return df
