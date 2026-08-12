@@ -18,3 +18,41 @@ def current_role() -> str | None:
     user = current_user()
     return user["role"] if user else None
 
+def login_form(expected_role: str, demo_username: str, demo_password: str, hint: str = ""):
+    """
+    Renders a login form scoped to `expected_role`. Login only succeeds if
+    the account's role in the database matches `expected_role` -- this is
+    what keeps the three portals separate (an admin account can't sign into
+    the Driver portal, a driver account can't sign into the Department
+    portal, etc.), even though all three share one `users` table.
+    """
+    st.markdown(f"#### {expected_role} sign in")
+    if hint:
+        st.caption(hint)
+
+    form_key = f"login_form_{expected_role.replace(' ', '_')}"
+    with st.form(form_key, clear_on_submit=False):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Sign In", type="primary", use_container_width=True)
+
+    if submitted:
+        user = database.verify_login(username.strip(), password)
+        if user and user["role"] == expected_role:
+            st.session_state["auth_user"] = user
+            st.success(f"Welcome, {user['full_name']}.")
+            st.rerun()
+        elif user and user["role"] != expected_role:
+            st.error(f"This account is registered as '{user['role']}', not '{expected_role}'. "
+                      f"Use the correct portal for this login.")
+        else:
+            st.error("Invalid username or password.")
+
+    with st.expander("Demo credentials"):
+        st.code(f"username: {demo_username}\npassword: {demo_password}", language="text")
+
+
+def logout_button():
+    if st.sidebar.button("Log out", use_container_width=True):
+        st.session_state.pop("auth_user", None)
+        st.rerun()
