@@ -35,3 +35,35 @@ try:
 except Exception as e:
     print("[Officer login flow] harness-level error:", e)
     ok5 = False
+
+# Log out, then check Driver Portal (logged out state + login)
+try:
+    at.sidebar.button[0].click().run()  # log out
+except Exception:
+    pass
+at.sidebar.radio[0].set_value("Driver Portal").run()
+ok6 = check(at, "Driver Portal (logged out)")
+try:
+    at.text_input[0].set_value("driver1")
+    at.text_input[1].set_value("Driver@123")
+    at.button[0].click().run()
+    ok7 = check(at, "Driver Portal (after login attempt)")
+except Exception as e:
+    print("[Driver login flow] harness-level error:", e)
+    ok7 = False
+
+# Log out, then check Department Portal (logged out state + login)
+try:
+    at.sidebar.button[0].click().run()  # log out
+except Exception:
+    pass
+at.sidebar.radio[0].set_value("Department Portal").run()
+ok8 = check(at, "Department Portal (logged out)")
+try:
+    at.text_input[0].set_value("kandy_branch")
+    at.text_input[1].set_value("Dept@123")
+    at.button[0].click().run()
+    ok9 = check(at, "Department Portal (after login attempt)")
+except Exception as e:
+    print("[Department login flow] harness-level error:", e)
+    ok9 = False
