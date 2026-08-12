@@ -56,3 +56,26 @@ def logout_button():
     if st.sidebar.button("Log out", use_container_width=True):
         st.session_state.pop("auth_user", None)
         st.rerun()
+
+
+def require_role_or_login(expected_role: str, demo_username: str, demo_password: str, hint: str = "") -> bool:
+    """
+    Standard guard used at the top of every portal page.
+    Returns True if the correctly-scoped user is signed in and the caller
+    should render the dashboard; returns False if it already rendered a
+    login form or a "wrong portal" notice instead.
+    """
+    if is_logged_in():
+        if current_role() == expected_role:
+            return True
+        st.warning(
+            f"You're currently signed in as **{current_user()['full_name']}** "
+            f"({current_role()}). Log out to switch to the {expected_role} portal."
+        )
+        logout_button()
+        return False
+
+    left, mid, right = st.columns([1, 1.2, 1])
+    with mid:
+        login_form(expected_role, demo_username, demo_password, hint)
+    return False
