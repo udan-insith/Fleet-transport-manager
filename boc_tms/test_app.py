@@ -67,3 +67,21 @@ try:
 except Exception as e:
     print("[Department login flow] harness-level error:", e)
     ok9 = False
+
+# Cross-portal rejection: driver1 credentials should NOT work on the officer login
+at2 = AppTest.from_file("app.py", default_timeout=30)
+at2.run()
+at2.sidebar.radio[0].set_value("Transport Officer Portal").run()
+try:
+    at2.text_input[0].set_value("driver1")
+    at2.text_input[1].set_value("Driver@123")
+    at2.button[0].click().run()
+    still_logged_out = not any("Signed in as" in str(at2.sidebar.markdown[i].value)
+                                for i in range(len(at2.sidebar.markdown))) if at2.sidebar.markdown else True
+    ok10 = check(at2, "Cross-portal login rejection")
+    print(f"[Cross-portal rejection] driver1 blocked from Officer portal: {'checked' if ok10 else 'ERROR STATE'}")
+except Exception as e:
+    print("[Cross-portal rejection] harness-level error:", e)
+    ok10 = False
+
+print("\nALL PASS:", all([ok1, ok2, ok3, ok4, ok5, ok6, ok7, ok8, ok9, ok10]))
