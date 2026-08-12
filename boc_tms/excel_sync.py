@@ -58,3 +58,21 @@ def _export_now():
                     os.remove(tmp_path)
                 except OSError:
                     pass
+
+def trigger_backup():
+    """Fire-and-forget: schedule a backup on a daemon thread and return instantly."""
+    t = threading.Thread(target=_export_now, daemon=True)
+    t.start()
+    return t
+
+
+def force_sync_blocking():
+    """Synchronous variant, useful for the initial seed / CLI testing."""
+    _export_now()
+
+
+if __name__ == "__main__":
+    database.init_db()
+    database.seed_if_empty()
+    force_sync_blocking()
+    print(f"Backup written to {os.path.abspath(BACKUP_PATH)}")
