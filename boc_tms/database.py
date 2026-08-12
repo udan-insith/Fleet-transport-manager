@@ -103,3 +103,16 @@ CREATE TABLE IF NOT EXISTS trip_requests (
 def init_db():
     with get_cursor(commit=True) as cur:
         cur.executescript(SCHEMA)
+
+#AUTH HELPERS
+def hash_password(raw: str) -> str:
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def verify_login(username: str, password: str):
+    with get_cursor() as cur:
+        cur.execute("SELECT * FROM users WHERE username = ?", (username,))
+        row = cur.fetchone()
+    if row and row["password_hash"] == hash_password(password):
+        return dict(row)
+    return None
