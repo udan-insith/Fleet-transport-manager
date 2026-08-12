@@ -308,3 +308,123 @@ def get_appointments(date_from: str | None = None, date_to: str | None = None) -
     df = pd.read_sql_query(q, conn, params=params)
     conn.close()
     return df
+
+#CONFLICT VALIDATION
+def _to_minutes(hhmm: str) -> int:
+    h, m = hhmm.split(":")
+    return int(h) * 60 + int(m)
+
+
+def _overlaps(s1, e1, s2, e2) -> bool:
+    return _to_minutes(s1) < _to_minutes(e2) and _to_minutes(s2) < _to_minutes(e1)
+
+
+def check_conflict(appt_date, start_time, end_time, driver_id, vehicle_id, exclude_id=None):
+    """
+    Returns a list of human-readable conflict messages (empty list = no conflict).
+    Checks both the driver and the vehicle against every *active* (non-cancelled)
+    appointment on the same date.
+    """
+    conflicts = []
+    with get_cursor() as cur:
+        cur.execute(
+            """SELECT a.*, d.name as driver_name, v.plate_no
+               FROM appointments a
+               JOIN drivers d ON d.id = a.driver_id
+               JOIN vehicles v ON v.id = a.vehicle_id
+               WHERE a.appt_date = ? AND a.status != 'Cancelled'""",
+            (appt_date,),
+        )
+        rows = cur.fetchall()
+
+    for row in rows:
+        if exclude_id is not None and row["id"] == exclude_id:
+            continue
+        if not _overlaps(start_time, end_time, row["start_time"], row["end_time"]):
+            continue
+        if row["driver_id"] == driver_id:
+            conflicts.append(
+                f"Driver already booked {row['start_time']}-{row['end_time']} "
+                f"(appointment #{row['id']})."
+            )
+        if row["vehicle_id"] == vehicle_id:
+            conflicts.append(
+                f"Vehicle {row['plate_no']} already booked {row['start_time']}-{row['end_time']} "
+                f"(appointment #{row['id']})."
+            )
+    return conflicts
+
+#WRITE HELPERS
+def add_appointment(appt_date, start_time, end_time, driver_id, vehicle_id,
+                     department_id, purpose, created_by):
+    conflicts = check_conflict(appt_date, start_time, end_time, driver_id, vehicle_id)
+    if conflicts:
+        return False, conflicts
+
+    with get_cursor(commit=True) as cur:
+        cur.execute(
+            """INSERT INTO appointments
+               (appt_date, start_time, end_time, driver_id, vehicle_id, department_id,
+                purpose, status, created_by, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?)""",
+            (appt_date, start_time, end_time, driver_id, vehicle_id, department_id,
+             purpose, created_by, datetime.datetime.now().isoformat(timespec="seconds")),
+        )
+
+    _touch_backup()
+    return True, []
+
+
+def update_appointment_status(appt_id: int, status: str):
+    with get_cursor(commit=True) as cur:
+        cur.execute("UPDATE appointments SET status = ? WHERE id = ?", (status, appt_id))
+    _touch_backup()
+
+
+def update_driver_status(driver_id: int, status: str):
+    with get_cursor(commit=True) as cur:
+        cur.execute("UPDATE drivers SET status = ? WHERE id = ?", (status, driver_id))
+    _touch_backup()
+
+
+def update_vehicle_status(vehicle_id: int, status: str):
+    with get_cursor(commit=True) as cur:
+        cur.execute("UPDATE vehicles SET status = ? WHERE id = ?", (status, vehicle_id))
+    _touch_backup()
+
+
+def add_driver(name, license_no, phone, base_location, status="Available", lat=None, lon=None):
+    with get_cursor(commit=True) as cur:
+        cur.execute(
+            """INSERT INTO drivers (name, license_no, phone, base_location, status, lat, lon)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (name, license_no, phone, base_location, status, lat, lon),
+        )
+    _touch_backup()
+
+
+def add_vehicle(plate_no, vehicle_type, capacity, status="Available", lat=None, lon=None):
+    with get_cursor(commit=True) as cur:
+        cur.execute(
+            """INSERT INTO vehicles (plate_no, vehicle_type, capacity, status, lat, lon)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (plate_no, vehicle_type, capacity, status, lat, lon),
+        )
+    _touch_backup()
+
+
+def nudge_driver_locations():
+    """
+    Mock GPS simulation: nudges the coordinates of drivers currently
+    'On Trip' by a small random offset, so the Live Map page feels like
+    it is tracking moving vehicles when the user clicks 'Simulate GPS Ping'.
+    """
+    with get_cursor(commit=True) as cur:
+        cur.execute("SELECT id, lat, lon FROM drivers WHERE status = 'On Trip'")
+        rows = cur.fetchall()
+        for row in rows:
+            new_lat = (row["lat"] or 6.9271) + random.uniform(-0.004, 0.004)
+            new_lon = (row["lon"] or 79.8612) + random.uniform(-0.004, 0.004)
+            cur.execute("UPDATE drivers SET lat = ?, lon = ? WHERE id = ?",
+                        (new_lat, new_lon, row["id"]))
+    _touch_backup()
