@@ -24,3 +24,10 @@ DEPARTMENT_PALETTE = [
     "#003366", "#FFCC00", "#2ECC71", "#8E44AD", "#E67E22",
     "#16A085", "#C0392B", "#2980B9", "#7F8C8D", "#D35400",
 ]
+
+def department_color(department_name: str, department_list: list[str]) -> str:
+    """Deterministic color per department, for the scheduler matrix."""
+    if department_name not in department_list:
+        return "#DDDDDD"
+    idx = department_list.index(department_name) % len(DEPARTMENT_PALETTE)
+    return DEPARTMENT_PALETTE[idx]
