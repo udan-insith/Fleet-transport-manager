@@ -49,3 +49,35 @@ first_id = int(appts.iloc[0]["id"])
 database.update_appointment_status(first_id, "Cancelled")
 ok, conflicts = database.add_appointment("2026-09-01", "09:00", "11:00", d1, v1, dep, "Test F", "tester")
 results.append(("Cancelled appointment frees the slot", ok and not conflicts))
+# 7) Driver/vehicle status updates persist
+database.update_driver_status(d1, "On Leave")
+d1_status = database.get_drivers()
+d1_status = d1_status[d1_status["id"] == d1].iloc[0]["status"]
+results.append(("Driver status update persists", d1_status == "On Leave"))
+
+# 8) Add driver / add vehicle
+database.add_driver("Test Driver", "B9999999", "0770000000", "Test Depot", lat=6.9, lon=79.8)
+results.append(("New driver appears in list", "Test Driver" in database.get_drivers()["name"].values))
+
+database.add_vehicle("TEST-0001", "Van", 8, lat=6.9, lon=79.8)
+results.append(("New vehicle appears in list", "TEST-0001" in database.get_vehicles()["plate_no"].values))
+
+# 9) Excel backup file gets created and contains expected sheets
+excel_sync.force_sync_blocking()
+import openpyxl
+wb = openpyxl.load_workbook(excel_sync.BACKUP_PATH)
+results.append(("Excel backup has all sheets",
+                 set(wb.sheetnames) == {"Summary", "Drivers", "Vehicles", "Departments",
+                                        "Appointments", "Trip Requests"}))
+results.append(("Excel backup Drivers sheet row count matches DB",
+                 wb["Drivers"].max_row - 1 == len(database.get_drivers())))
+
+# 10) Departments management + linked login creation
+new_dept_id = database.add_department("Test Branch", "Test City", lat=7.0, lon=80.0)
+results.append(("New department appears in list", "Test Branch" in database.get_departments()["name"].values))
+
+database.create_login("test_dept_user", "TestPass123", "Test Branch", "Department", linked_department_id=new_dept_id)
+login_check = database.verify_login("test_dept_user", "TestPass123")
+results.append(("New department login authenticates", login_check is not None and login_check["role"] == "Department"))
+results.append(("username_exists detects existing username", database.username_exists("test_dept_user")))
+results.append(("username_exists returns False for unused name", not database.username_exists("nobody_here")))
