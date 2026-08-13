@@ -81,3 +81,34 @@ login_check = database.verify_login("test_dept_user", "TestPass123")
 results.append(("New department login authenticates", login_check is not None and login_check["role"] == "Department"))
 results.append(("username_exists detects existing username", database.username_exists("test_dept_user")))
 results.append(("username_exists returns False for unused name", not database.username_exists("nobody_here")))
+
+# 11) Department request -> approve/reject/cancel workflow
+database.add_trip_request(new_dept_id, "2026-10-01", "09:00", "10:00", "Test request", "test_dept_user")
+pend = database.get_trip_requests(status="Pending", department_id=new_dept_id)
+results.append(("Trip request created as Pending", len(pend) == 1))
+
+req_id = int(pend.iloc[0]["id"])
+ok, conflicts = database.approve_trip_request(req_id, d2, v2)
+results.append(("Approving a request creates an appointment", ok and not conflicts))
+approved = database.get_trip_requests(status="Approved", department_id=new_dept_id)
+results.append(("Approved request links to a new appointment", not approved.empty and pd.notna(approved.iloc[0]["appointment_id"])))
+
+database.add_trip_request(new_dept_id, "2026-10-02", "09:00", "10:00", "Test cancel", "test_dept_user")
+pend2 = database.get_trip_requests(status="Pending", department_id=new_dept_id)
+cancel_id = int(pend2.iloc[0]["id"])
+database.cancel_trip_request(cancel_id)
+cancelled = database.get_trip_requests(status="Cancelled", department_id=new_dept_id)
+results.append(("Cancelling a pending request works", len(cancelled) == 1))
+
+# --- report ---
+print("\n=== BUSINESS LOGIC TEST RESULTS ===")
+all_pass = True
+for name, passed in results:
+    print(f"{'PASS' if passed else 'FAIL'} - {name}")
+    all_pass = all_pass and passed
+print("\nALL PASS:", all_pass)
+
+# cleanup
+for f in (database.DB_PATH, excel_sync.BACKUP_PATH):
+    if os.path.exists(f):
+        os.remove(f)
