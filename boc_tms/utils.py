@@ -43,3 +43,12 @@ def haversine_km(lat1, lon1, lat2, lon2) -> float:
     dlambda = math.radians(lon2 - lon1)
     a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlambda / 2) ** 2
     return 2 * R * math.asin(math.sqrt(a))
+
+#TIME HELPERS
+TIME_OPTIONS = [f"{h:02d}:{m:02d}" for h in range(6, 21) for m in (0, 30)]
+
+
+def minutes_between(start_hhmm: str, end_hhmm: str) -> int:
+    sh, sm = map(int, start_hhmm.split(":"))
+    eh, em = map(int, end_hhmm.split(":"))
+    return (eh * 60 + em) - (sh * 60 + sm)
