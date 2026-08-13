@@ -112,7 +112,9 @@ def render_header(subtitle: str):
         f"""
         <div class="boc-header">
             <div style="display:flex; align-items:center; gap:14px;">
-                <div class="boc-logo-badge">BOC</div>
+                <div class="boc-logo-badge">
+                    <img src="https://images.seeklogo.com/logo-png/24/1/bank-of-ceylon-logo-png_seeklogo-247588.png" />
+                </div>
                 <div>
                     <h1>Bank of Ceylon &mdash; WPS Transport Management System</h1>
                     <p>{subtitle}</p>
