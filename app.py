@@ -286,3 +286,122 @@ def page_live_map():
         "up to a real telematics/GPS API for production tracking.",
         icon="ℹ️",
     )
+
+#MONTHLY SCHEDULER
+def build_matrix(entity_df, entity_id_col, entity_label_col, appts, days_in_month, year, month):
+    """
+    Build a rows=entity x cols=day grid of department names (comma-joined if >1).
+
+    Indexed internally by the entity's unique DB id (never by name/plate, which
+    can collide) and only relabeled for display at the very end, so `.at[]`
+    lookups always resolve to a single scalar cell.
+    """
+    entity_ids = entity_df["id"].tolist()
+    day_cols = [str(d) for d in range(1, days_in_month + 1)]
+    grid = pd.DataFrame("", index=entity_ids, columns=day_cols)
+
+    for _, row in appts.iterrows():
+        appt_date = datetime.date.fromisoformat(row["appt_date"])
+        if appt_date.year != year or appt_date.month != month:
+            continue
+        entity_id = row[entity_id_col]            # e.g. row["driver_id"] or row["vehicle_id"]
+        if entity_id not in grid.index:
+            continue
+        day_col = str(appt_date.day)
+        existing = grid.at[entity_id, day_col]
+        cell_text = row["department_name"]
+        grid.at[entity_id, day_col] = f"{existing}, {cell_text}" if existing else cell_text
+
+    # Make row labels unique for display (e.g. "Nimal Perera (#3)") in case
+    # two drivers/vehicles happen to share the same name/plate.
+    label_counts = entity_df[entity_label_col].value_counts()
+    display_labels = []
+    for _, r in entity_df.iterrows():
+        base = r[entity_label_col]
+        display_labels.append(f"{base} (#{r['id']})" if label_counts[base] > 1 else base)
+    grid.index = display_labels
+    return grid
+
+
+def style_matrix(grid: pd.DataFrame, dept_list: list[str]):
+    def color_cell(val):
+        if not val:
+            return "background-color: #FFFFFF; color: #C6C6C6;"
+        first_dept = val.split(",")[0].strip()
+        bg = utils.department_color(first_dept, dept_list)
+        return f"background-color: {bg}22; color: {utils.BOC_NAVY}; font-weight: 600; border-left: 4px solid {bg};"
+
+    styler = grid.style
+    # pandas >= 2.1 renamed Styler.applymap to Styler.map; support both.
+    if hasattr(styler, "map"):
+        return styler.map(color_cell)
+    return styler.applymap(color_cell)
+
+
+def page_scheduler():
+    render_header("Monthly Scheduler Matrix &mdash; Driver / Vehicle Assignments")
+
+    today = datetime.date.today()
+    c1, c2, c3 = st.columns([1, 1, 2])
+    with c1:
+        year = st.selectbox("Year", list(range(today.year - 1, today.year + 2)),
+                             index=1)
+    with c2:
+        month = st.selectbox("Month", list(range(1, 13)),
+                              index=today.month - 1,
+                              format_func=lambda m: calendar.month_name[m])
+    with c3:
+        view_by = st.radio("View by", ["Driver", "Vehicle"], horizontal=True)
+
+    days_in_month = calendar.monthrange(year, month)[1]
+    month_start = datetime.date(year, month, 1).isoformat()
+    month_end = datetime.date(year, month, days_in_month).isoformat()
+    appts = database.get_appointments(date_from=month_start, date_to=month_end)
+    appts = appts[appts["status"] != "Cancelled"]
+
+    departments = database.get_departments()
+    dept_list = departments["name"].tolist()
+
+    if view_by == "Driver":
+        drivers = database.get_drivers()
+        grid = build_matrix(drivers, "driver_id", "name", appts, days_in_month, year, month)
+    else:
+        vehicles = database.get_vehicles()
+        grid = build_matrix(vehicles, "vehicle_id", "plate_no", appts, days_in_month, year, month)
+
+    st.markdown(f"**{calendar.month_name[month]} {year}** &mdash; grid cells show the department "
+                f"each {view_by.lower()} is assigned to on that day. Empty = unassigned/free.")
+
+    st.dataframe(style_matrix(grid, dept_list), use_container_width=True, height=430)
+
+    with st.expander("Department color legend"):
+        legend_cols = st.columns(4)
+        for i, name in enumerate(dept_list):
+            color = utils.department_color(name, dept_list)
+            swatch = (
+                f'<span style="display:inline-block;width:12px;height:12px;'
+                f'background-color:{color};border-radius:3px;margin-right:6px;"></span> {name}'
+            )
+            legend_cols[i % 4].markdown(swatch, unsafe_allow_html=True)
+
+    st.write("")
+    st.subheader(f"Appointment list — {calendar.month_name[month]} {year}")
+    if appts.empty:
+        st.caption("No appointments scheduled this month.")
+    else:
+        display_cols = ["appt_date", "start_time", "end_time", "driver_name",
+                         "plate_no", "department_name", "purpose", "status"]
+        st.dataframe(
+            appts[display_cols].rename(columns={
+                "appt_date": "Date", "start_time": "Start", "end_time": "End",
+                "driver_name": "Driver", "plate_no": "Vehicle",
+                "department_name": "Department", "purpose": "Purpose", "status": "Status",
+            }),
+            use_container_width=True, hide_index=True,
+        )
+
+    st.success(
+        "Conflict protection is active: the booking form in the Employee Portal blocks any "
+        "driver or vehicle from being double-booked into overlapping time slots.",
+        icon="🛡️",
+    )
