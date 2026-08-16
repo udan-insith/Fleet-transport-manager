@@ -405,3 +405,557 @@ def page_scheduler():
         "driver or vehicle from being double-booked into overlapping time slots.",
         icon="🛡️",
     )
+
+# --------------------------------------------------------------------------
+# PAGE: Employee Portal
+# --------------------------------------------------------------------------
+
+def tab_add_appointment():
+    st.subheader("New Appointment / Booking")
+
+    drivers = database.get_drivers()
+    vehicles = database.get_vehicles()
+    departments = database.get_departments()
+
+    driver_labels = {f"{r['name']} ({r['status']}) — ID {r['id']}": r["id"] for _, r in drivers.iterrows()}
+    vehicle_labels = {f"{r['plate_no']} - {r['vehicle_type']} ({r['status']})": r["id"]
+                       for _, r in vehicles.iterrows()}
+
+    with st.form("add_appt_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            appt_date = st.date_input("Date", value=datetime.date.today())
+            start_time = st.selectbox("Start time", utils.TIME_OPTIONS, index=4)
+            driver_label = st.selectbox("Driver", list(driver_labels.keys()))
+        with col2:
+            end_time = st.selectbox("End time", utils.TIME_OPTIONS, index=8)
+            vehicle_label = st.selectbox("Vehicle", list(vehicle_labels.keys()))
+            department_name = st.selectbox("Department / Destination", departments["name"].tolist())
+
+        purpose = st.text_area("Purpose of trip", placeholder="e.g. Cash in transit to Kandy Regional Office")
+        submitted = st.form_submit_button("Book Appointment", type="primary", use_container_width=True)
+
+    if submitted:
+        driver_id = int(driver_labels[driver_label])
+        vehicle_id = int(vehicle_labels[vehicle_label])
+        department_id = int(departments[departments["name"] == department_name].iloc[0]["id"])
+
+        if end_time <= start_time:
+            st.error("End time must be after start time.")
+            return
+
+        ok, conflicts = database.add_appointment(
+            appt_date.isoformat(), start_time, end_time,
+            driver_id, vehicle_id, department_id, purpose,
+            created_by=auth.current_user()["username"],
+        )
+        if ok:
+            st.success("Appointment booked successfully. Excel backup syncing in the background.")
+            st.rerun()
+        else:
+            st.error("Booking rejected — conflict(s) detected:")
+            for c in conflicts:
+                st.write(f"- {c}")
+
+
+def tab_manage_appointments():
+    st.subheader("Manage Appointments")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        date_from = st.date_input("From", value=datetime.date.today() - datetime.timedelta(days=7))
+    with c2:
+        date_to = st.date_input("To", value=datetime.date.today() + datetime.timedelta(days=30))
+
+    appts = database.get_appointments(date_from.isoformat(), date_to.isoformat())
+    if appts.empty:
+        st.caption("No appointments in this range.")
+        return
+
+    display_cols = ["id", "appt_date", "start_time", "end_time", "driver_name",
+                     "plate_no", "department_name", "purpose", "status"]
+    st.dataframe(
+        appts[display_cols].rename(columns={
+            "id": "ID", "appt_date": "Date", "start_time": "Start", "end_time": "End",
+            "driver_name": "Driver", "plate_no": "Vehicle",
+            "department_name": "Department", "purpose": "Purpose", "status": "Status",
+        }),
+        use_container_width=True, hide_index=True,
+    )
+
+    st.markdown("**Update appointment status**")
+    c3, c4, c5 = st.columns([1, 1, 1])
+    with c3:
+        appt_id = st.selectbox("Appointment ID", appts["id"].tolist())
+    with c4:
+        new_status = st.selectbox("New status", ["Scheduled", "Completed", "Cancelled"])
+    with c5:
+        st.write("")
+        st.write("")
+        if st.button("Apply Update", use_container_width=True):
+            database.update_appointment_status(int(appt_id), new_status)
+            st.success(f"Appointment #{appt_id} set to '{new_status}'.")
+            st.rerun()
+
+
+def tab_manage_drivers():
+    st.subheader("Manage Drivers")
+    drivers = database.get_drivers()
+    st.dataframe(
+        drivers.rename(columns={
+            "name": "Name", "license_no": "License No.", "phone": "Phone",
+            "base_location": "Base", "status": "Status",
+        })[["id", "Name", "License No.", "Phone", "Base", "Status"]],
+        use_container_width=True, hide_index=True,
+    )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        with st.expander("➕ Add new driver (optionally with a portal login)"):
+            with st.form("add_driver_form"):
+                name = st.text_input("Full name")
+                license_no = st.text_input("License number")
+                phone = st.text_input("Phone")
+                base_location = st.text_input("Base location", value="Head Office Depot")
+
+                st.markdown("---")
+                create_login = st.checkbox("Also create a Driver Portal login for this driver")
+                login_username = st.text_input("Login username", disabled=not create_login, key="drv_login_user")
+                login_password = st.text_input("Login password", type="password",
+                                                 disabled=not create_login, key="drv_login_pass")
+
+                submitted = st.form_submit_button("Add Driver", use_container_width=True)
+
+            if submitted:
+                if not (name and license_no):
+                    st.error("Name and license number are required.")
+                elif create_login and not (login_username and login_password):
+                    st.error("Provide a username and password, or untick the login checkbox.")
+                elif create_login and database.username_exists(login_username.strip()):
+                    st.error("That username is already taken.")
+                else:
+                    with database.get_cursor(commit=True) as cur:
+                        cur.execute(
+                            """INSERT INTO drivers (name, license_no, phone, base_location, status, lat, lon)
+                               VALUES (?, ?, ?, ?, 'Available', 6.9271, 79.8612)""",
+                            (name, license_no, phone, base_location),
+                        )
+                        new_driver_id = cur.lastrowid
+                    database._touch_backup()
+                    if create_login:
+                        database.create_login(login_username.strip(), login_password, name,
+                                               "Driver", linked_driver_id=new_driver_id)
+                        st.success(f"Driver '{name}' added with a portal login.")
+                    else:
+                        st.success(f"Driver '{name}' added.")
+                    st.rerun()
+
+    with col2:
+        with st.expander("🔄 Update driver status"):
+            with st.form("update_driver_form"):
+                driver_id = st.selectbox("Driver", drivers["id"].tolist(),
+                                          format_func=lambda i: drivers[drivers["id"] == i].iloc[0]["name"])
+                new_status = st.selectbox("Status", list(utils.DRIVER_STATUS_COLORS.keys()))
+                if st.form_submit_button("Update Status", use_container_width=True):
+                    database.update_driver_status(int(driver_id), new_status)
+                    st.success("Driver status updated.")
+                    st.rerun()
+
+
+def tab_manage_vehicles():
+    st.subheader("Manage Vehicles")
+    vehicles = database.get_vehicles()
+    st.dataframe(
+        vehicles.rename(columns={
+            "plate_no": "Plate No.", "vehicle_type": "Type",
+            "capacity": "Capacity", "status": "Status",
+        })[["id", "Plate No.", "Type", "Capacity", "Status"]],
+        use_container_width=True, hide_index=True,
+    )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        with st.expander("➕ Add new vehicle"):
+            with st.form("add_vehicle_form"):
+                plate_no = st.text_input("Plate number")
+                vehicle_type = st.selectbox("Type", ["Van", "Car", "Double Cab", "Bus", "Lorry"])
+                capacity = st.number_input("Capacity", min_value=1, max_value=60, value=4)
+                if st.form_submit_button("Add Vehicle", use_container_width=True):
+                    if plate_no:
+                        try:
+                            database.add_vehicle(plate_no, vehicle_type, int(capacity),
+                                                  lat=6.9271, lon=79.8612)
+                            st.success(f"Vehicle '{plate_no}' added.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Could not add vehicle (duplicate plate?): {e}")
+                    else:
+                        st.error("Plate number is required.")
+
+    with col2:
+        with st.expander("🔄 Update vehicle status"):
+            with st.form("update_vehicle_form"):
+                vehicle_id = st.selectbox("Vehicle", vehicles["id"].tolist(),
+                                           format_func=lambda i: vehicles[vehicles["id"] == i].iloc[0]["plate_no"])
+                new_status = st.selectbox("Status", list(utils.VEHICLE_STATUS_COLORS.keys()))
+                if st.form_submit_button("Update Status", use_container_width=True):
+                    database.update_vehicle_status(int(vehicle_id), new_status)
+                    st.success("Vehicle status updated.")
+                    st.rerun()
+
+
+def tab_pending_requests():
+    st.subheader("Department Transport Requests")
+    st.caption("Requests submitted by branches/divisions via the Department Portal. "
+               "Approving assigns a driver + vehicle and runs the same conflict check as a normal booking.")
+
+    status_filter = st.radio("Show", ["Pending", "Approved", "Rejected", "Cancelled", "All"],
+                              horizontal=True, key="req_status_filter")
+    reqs = database.get_trip_requests(status=None if status_filter == "All" else status_filter)
+
+    if reqs.empty:
+        st.caption("No requests in this category.")
+        return
+
+    display_cols = ["id", "department_name", "appt_date", "start_time", "end_time",
+                     "purpose", "status", "requested_by", "driver_name", "plate_no"]
+    st.dataframe(
+        reqs[display_cols].rename(columns={
+            "id": "ID", "department_name": "Department", "appt_date": "Date",
+            "start_time": "Start", "end_time": "End", "purpose": "Purpose",
+            "status": "Status", "requested_by": "Requested By",
+            "driver_name": "Assigned Driver", "plate_no": "Assigned Vehicle",
+        }),
+        use_container_width=True, hide_index=True,
+    )
+
+    pending = database.get_trip_requests(status="Pending")
+    if pending.empty:
+        return
+
+    st.markdown("**Review a pending request**")
+    drivers = database.get_drivers()
+    vehicles = database.get_vehicles()
+
+    req_options = {
+        f"#{r['id']} — {r['department_name']} — {r['appt_date']} {r['start_time']}-{r['end_time']}": r["id"]
+        for _, r in pending.iterrows()
+    }
+    driver_labels = {f"{r['name']} ({r['status']})": r["id"] for _, r in drivers.iterrows()}
+    vehicle_labels = {f"{r['plate_no']} - {r['vehicle_type']} ({r['status']})": r["id"]
+                       for _, r in vehicles.iterrows()}
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        req_choice = st.selectbox("Request", list(req_options.keys()))
+    with c2:
+        driver_choice = st.selectbox("Assign driver", list(driver_labels.keys()))
+    with c3:
+        vehicle_choice = st.selectbox("Assign vehicle", list(vehicle_labels.keys()))
+
+    a1, a2 = st.columns(2)
+    with a1:
+        if st.button("✅ Approve & Assign", type="primary", use_container_width=True):
+            ok, conflicts = database.approve_trip_request(
+                req_options[req_choice], driver_labels[driver_choice], vehicle_labels[vehicle_choice]
+            )
+            if ok:
+                st.success("Request approved and appointment created.")
+                st.rerun()
+            else:
+                st.error("Could not approve — conflict(s) detected:")
+                for c in conflicts:
+                    st.write(f"- {c}")
+    with a2:
+        with st.popover("❌ Reject request", use_container_width=True):
+            note = st.text_area("Reason (optional)", key="reject_note")
+            if st.button("Confirm rejection", key="confirm_reject"):
+                database.reject_trip_request(req_options[req_choice], note)
+                st.success("Request rejected.")
+                st.rerun()
+
+
+def tab_manage_departments():
+    st.subheader("Manage Departments / Branches")
+    departments = database.get_departments()
+    st.dataframe(
+        departments.rename(columns={
+            "name": "Name", "location": "Location", "lat": "Latitude", "lon": "Longitude",
+        })[["id", "Name", "Location", "Latitude", "Longitude"]],
+        use_container_width=True, hide_index=True,
+    )
+
+    with st.expander("➕ Add new department / branch (optionally with a portal login)"):
+        with st.form("add_department_form"):
+            name = st.text_input("Department / branch name")
+            location = st.text_input("Location (city/area)")
+            lat = st.number_input("Latitude", value=6.9271, format="%.4f")
+            lon = st.number_input("Longitude", value=79.8612, format="%.4f")
+
+            st.markdown("---")
+            create_login = st.checkbox("Also create a Department Portal login for this branch")
+            login_username = st.text_input("Login username", disabled=not create_login)
+            login_password = st.text_input("Login password", type="password", disabled=not create_login)
+
+            submitted = st.form_submit_button("Add Department", use_container_width=True)
+
+        if submitted:
+            if not name:
+                st.error("Department name is required.")
+            elif create_login and not (login_username and login_password):
+                st.error("Provide a username and password, or untick the login checkbox.")
+            elif create_login and database.username_exists(login_username.strip()):
+                st.error("That username is already taken.")
+            else:
+                dept_id = database.add_department(name, location, lat, lon)
+                if create_login:
+                    database.create_login(login_username.strip(), login_password, name,
+                                           "Department", linked_department_id=dept_id)
+                    st.success(f"Department '{name}' added with a portal login.")
+                else:
+                    st.success(f"Department '{name}' added.")
+                st.rerun()
+
+
+def page_employee_portal():
+    render_header("Transport Officer Portal &mdash; Secure Access")
+
+    if not auth.require_role_or_login(
+        auth.ROLE_OFFICER, "admin", "BOC@Transport2026",
+        "Full control: approve department requests, manage bookings, drivers and vehicles."
+    ):
+        return
+
+    user = auth.current_user()
+    st.sidebar.markdown(f"**Signed in as:** {user['full_name']}")
+    auth.logout_button()
+
+    pending_count = len(database.get_trip_requests(status="Pending"))
+    requests_label = f"📥 Pending Requests ({pending_count})" if pending_count else "📥 Pending Requests"
+
+    tabs = st.tabs([requests_label, "➕ Add Appointment", "📋 Manage Appointments",
+                     "🧑‍✈️ Manage Drivers", "🚐 Manage Vehicles", "🏢 Manage Departments"])
+    with tabs[0]:
+        tab_pending_requests()
+    with tabs[1]:
+        tab_add_appointment()
+    with tabs[2]:
+        tab_manage_appointments()
+    with tabs[3]:
+        tab_manage_drivers()
+    with tabs[4]:
+        tab_manage_vehicles()
+    with tabs[5]:
+        tab_manage_departments()
+
+
+# --------------------------------------------------------------------------
+# PAGE: Driver Portal
+# --------------------------------------------------------------------------
+
+def page_driver_portal():
+    render_header("Driver Portal &mdash; My Schedule")
+
+    if not auth.require_role_or_login(
+        auth.ROLE_DRIVER, "driver1", "Driver@123",
+        "For drivers: view your assigned trips and update your own availability."
+    ):
+        return
+
+    user = auth.current_user()
+    driver_id = user["linked_driver_id"]
+    st.sidebar.markdown(f"**Signed in as:** {user['full_name']} (Driver)")
+    auth.logout_button()
+
+    drivers = database.get_drivers()
+    my_row = drivers[drivers["id"] == driver_id]
+    if my_row.empty:
+        st.error("Your linked driver record could not be found. Contact the Transport Officer.")
+        return
+    my_row = my_row.iloc[0]
+
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        st.subheader(f"Welcome, {my_row['name']}")
+        st.caption(f"License: {my_row['license_no']} · Base: {my_row['base_location']} · "
+                   f"Phone: {my_row['phone']}")
+    with c2:
+        st.markdown(f"Current status: {status_pill(my_row['status'], utils.DRIVER_STATUS_COLORS)}",
+                    unsafe_allow_html=True)
+
+    with st.form("driver_status_form"):
+        new_status = st.selectbox("Update my status", list(utils.DRIVER_STATUS_COLORS.keys()),
+                                   index=list(utils.DRIVER_STATUS_COLORS.keys()).index(my_row["status"]))
+        if st.form_submit_button("Update Status", type="primary"):
+            database.update_driver_status(int(driver_id), new_status)
+            st.success("Status updated.")
+            st.rerun()
+
+    st.write("")
+    today = datetime.date.today()
+    all_my_appts = database.get_appointments()
+    all_my_appts = all_my_appts[
+        (all_my_appts["driver_id"] == driver_id) & (all_my_appts["status"] != "Cancelled")
+    ]
+
+    todays = all_my_appts[all_my_appts["appt_date"] == today.isoformat()]
+    st.subheader("Today's assignments")
+    if todays.empty:
+        st.caption("No trips assigned for today.")
+    else:
+        st.dataframe(
+            todays[["start_time", "end_time", "department_name", "plate_no", "purpose", "status"]].rename(
+                columns={"start_time": "Start", "end_time": "End", "department_name": "Department",
+                         "plate_no": "Vehicle", "purpose": "Purpose", "status": "Status"}),
+            use_container_width=True, hide_index=True,
+        )
+
+    st.subheader("Upcoming assignments (next 14 days)")
+    upcoming = all_my_appts[
+        (all_my_appts["appt_date"] > today.isoformat()) &
+        (all_my_appts["appt_date"] <= (today + datetime.timedelta(days=14)).isoformat())
+    ]
+    if upcoming.empty:
+        st.caption("Nothing scheduled in the next two weeks.")
+    else:
+        st.dataframe(
+            upcoming[["appt_date", "start_time", "end_time", "department_name", "plate_no", "purpose", "status"]]
+            .rename(columns={"appt_date": "Date", "start_time": "Start", "end_time": "End",
+                             "department_name": "Department", "plate_no": "Vehicle",
+                             "purpose": "Purpose", "status": "Status"}),
+            use_container_width=True, hide_index=True,
+        )
+
+    st.write("")
+    st.subheader("Mark a trip completed")
+    schedulable = all_my_appts[all_my_appts["status"] == "Scheduled"]
+    if schedulable.empty:
+        st.caption("No scheduled trips to update.")
+    else:
+        options = {
+            f"#{r['id']} — {r['appt_date']} {r['start_time']}-{r['end_time']} — {r['department_name']}": r["id"]
+            for _, r in schedulable.iterrows()
+        }
+        choice = st.selectbox("Trip", list(options.keys()))
+        if st.button("Mark as Completed"):
+            database.update_appointment_status(int(options[choice]), "Completed")
+            st.success("Trip marked completed.")
+            st.rerun()
+
+
+# --------------------------------------------------------------------------
+# PAGE: Department Portal
+# --------------------------------------------------------------------------
+
+def page_department_portal():
+    render_header("Department Portal &mdash; Transport Requests")
+
+    if not auth.require_role_or_login(
+        auth.ROLE_DEPARTMENT, "kandy_branch", "Dept@123",
+        "For requesting branches/divisions: submit a transport request and track its status."
+    ):
+        return
+
+    user = auth.current_user()
+    department_id = user["linked_department_id"]
+    st.sidebar.markdown(f"**Signed in as:** {user['full_name']} (Department)")
+    auth.logout_button()
+
+    departments = database.get_departments()
+    my_dept = departments[departments["id"] == department_id]
+    if my_dept.empty:
+        st.error("Your linked department record could not be found. Contact the Transport Officer.")
+        return
+    my_dept = my_dept.iloc[0]
+
+    st.subheader(f"{my_dept['name']}")
+    st.caption(f"Location: {my_dept['location']}")
+
+    st.write("")
+    st.subheader("Submit a new transport request")
+    st.caption("Your request goes to the Transport Officer for approval and driver/vehicle assignment.")
+    with st.form("new_request_form"):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            req_date = st.date_input("Date", value=datetime.date.today())
+        with c2:
+            start_time = st.selectbox("Start time", utils.TIME_OPTIONS, index=4)
+        with c3:
+            end_time = st.selectbox("End time", utils.TIME_OPTIONS, index=8)
+        purpose = st.text_area("Purpose", placeholder="e.g. Document courier to Head Office")
+        submitted = st.form_submit_button("Submit Request", type="primary", use_container_width=True)
+
+    if submitted:
+        if end_time <= start_time:
+            st.error("End time must be after start time.")
+        elif not purpose.strip():
+            st.error("Please describe the purpose of the trip.")
+        else:
+            database.add_trip_request(int(department_id), req_date.isoformat(), start_time, end_time,
+                                       purpose.strip(), user["username"])
+            st.success("Request submitted. You'll see its status below once the Transport Officer responds.")
+            st.rerun()
+
+    st.write("")
+    st.subheader("My request history")
+    my_requests = database.get_trip_requests(department_id=int(department_id))
+    if my_requests.empty:
+        st.caption("No requests submitted yet.")
+        return
+
+    status_colors = {"Pending": "#FFCC00", "Approved": "#2ECC71", "Rejected": "#E74C3C", "Cancelled": "#95A5A6"}
+    for _, r in my_requests.iterrows():
+        with st.container(border=True):
+            top1, top2 = st.columns([3, 1])
+            with top1:
+                st.markdown(f"**{r['appt_date']}**, {r['start_time']}–{r['end_time']} — {r['purpose']}")
+            with top2:
+                st.markdown(status_pill(r["status"], status_colors), unsafe_allow_html=True)
+            if r["status"] == "Approved":
+                st.caption(f"Assigned: {r['driver_name']} driving {r['plate_no']}")
+            elif r["status"] == "Rejected" and r["decision_note"]:
+                st.caption(f"Reason: {r['decision_note']}")
+            elif r["status"] == "Pending":
+                if st.button("Withdraw request", key=f"cancel_{r['id']}"):
+                    database.cancel_trip_request(int(r["id"]))
+                    st.rerun()
+
+
+# --------------------------------------------------------------------------
+# Main / navigation
+# --------------------------------------------------------------------------
+
+def main():
+    inject_theme()
+
+    st.sidebar.markdown(
+        "<h2 style='color:#FFCC00;'>BOC WPS Transport</h2>", unsafe_allow_html=True
+    )
+    page = st.sidebar.radio(
+        "Navigate",
+        ["Live Dashboard", "Live GPS Map", "Monthly Scheduler",
+         "Transport Officer Portal", "Driver Portal", "Department Portal"],
+        label_visibility="collapsed",
+    )
+    st.sidebar.markdown("---")
+    st.sidebar.caption(
+        f"Database: `{database.DB_PATH}`\n\nExcel backup: `{excel_sync.BACKUP_PATH}`"
+    )
+    st.sidebar.caption(f"Server time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    if page == "Live Dashboard":
+        page_dashboard()
+    elif page == "Live GPS Map":
+        page_live_map()
+    elif page == "Monthly Scheduler":
+        page_scheduler()
+    elif page == "Transport Officer Portal":
+        page_employee_portal()
+    elif page == "Driver Portal":
+        page_driver_portal()
+    elif page == "Department Portal":
+        page_department_portal()
+
+
+if __name__ == "__main__":
+    main()
