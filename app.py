@@ -105,3 +105,25 @@ def inject_theme():
         """,
         unsafe_allow_html=True,
     )
+
+
+def render_header(subtitle: str):
+    st.markdown(
+        f"""
+        <div class="boc-header">
+            <div style="display:flex; align-items:center; gap:14px;">
+                <div class="boc-logo-badge">BOC</div>
+                <div>
+                    <h1>Bank of Ceylon &mdash; WPS Transport Management System</h1>
+                    <p>{subtitle}</p>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def status_pill(status: str, color_map: dict) -> str:
+    color = color_map.get(status, "#7F8C8D")
+    return f'<span class="status-pill" style="background-color:{color};">{status}</span>'
