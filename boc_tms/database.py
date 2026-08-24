@@ -321,6 +321,7 @@ def get_departments() -> pd.DataFrame:
     return df
 
 
+
 def get_appointments(date_from: str | None = None, date_to: str | None = None) -> pd.DataFrame:
     conn = get_connection()
     q = """
