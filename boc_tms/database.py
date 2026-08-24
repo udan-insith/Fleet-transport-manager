@@ -443,12 +443,27 @@ def add_driver(name, license_no, phone, base_location, status="Available", lat=N
     _touch_backup()
 
 
-def add_vehicle(plate_no, vehicle_type, capacity, status="Available", lat=None, lon=None):
+def add_vehicle(plate_no, vehicle_type, capacity, status="Available", lat=None, lon=None,
+                 insurance_expiry=None, revenue_license_expiry=None, next_service_due=None):
     with get_cursor(commit=True) as cur:
         cur.execute(
-            """INSERT INTO vehicles (plate_no, vehicle_type, capacity, status, lat, lon)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (plate_no, vehicle_type, capacity, status, lat, lon),
+            """INSERT INTO vehicles (plate_no, vehicle_type, capacity, status, lat, lon,
+                                      insurance_expiry, revenue_license_expiry, next_service_due)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (plate_no, vehicle_type, capacity, status, lat, lon,
+             insurance_expiry, revenue_license_expiry, next_service_due),
+        )
+    _touch_backup()
+
+
+def update_vehicle_compliance(vehicle_id: int, insurance_expiry=None, revenue_license_expiry=None,
+                               next_service_due=None):
+    with get_cursor(commit=True) as cur:
+        cur.execute(
+            """UPDATE vehicles
+               SET insurance_expiry = ?, revenue_license_expiry = ?, next_service_due = ?
+               WHERE id = ?""",
+            (insurance_expiry, revenue_license_expiry, next_service_due, vehicle_id),
         )
     _touch_backup()
 
