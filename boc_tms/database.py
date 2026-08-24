@@ -468,163 +468,51 @@ def update_vehicle_compliance(vehicle_id: int, insurance_expiry=None, revenue_li
     _touch_backup()
 
 
-def nudge_driver_locations():
+def vehicles_needing_attention(warn_days: int = 30) -> pd.DataFrame:
     """
-    Mock GPS simulation: nudges the coordinates of drivers currently
-    'On Trip' by a small random offset, so the Live Map page feels like
-    it is tracking moving vehicles when the user clicks 'Simulate GPS Ping'.
+    Returns vehicles whose insurance, revenue license, or next service is
+    already overdue or due within `warn_days`, with a human-readable
+    'issues' column listing which. Used for the fleet compliance alerts
+    on the Dashboard and Reports pages.
     """
-    with get_cursor(commit=True) as cur:
-        cur.execute("SELECT id, lat, lon FROM drivers WHERE status = 'On Trip'")
-        rows = cur.fetchall()
-        for row in rows:
-            new_lat = (row["lat"] or 6.9271) + random.uniform(-0.004, 0.004)
-            new_lon = (row["lon"] or 79.8612) + random.uniform(-0.004, 0.004)
-            cur.execute("UPDATE drivers SET lat = ?, lon = ? WHERE id = ?",
-                        (new_lat, new_lon, row["id"]))
-    _touch_backup()
+    vehicles = get_vehicles()
+    if vehicles.empty:
+        return vehicles.assign(issues=[])
 
-#TRANSPORT REQUESTS
-def add_trip_request(department_id, appt_date, start_time, end_time, purpose, requested_by):
-    with get_cursor(commit=True) as cur:
-        cur.execute(
-            """INSERT INTO trip_requests
-               (department_id, appt_date, start_time, end_time, purpose, status, requested_by, created_at)
-               VALUES (?, ?, ?, ?, ?, 'Pending', ?, ?)""",
-            (department_id, appt_date, start_time, end_time, purpose, requested_by,
-             datetime.datetime.now().isoformat(timespec="seconds")),
-        )
-    _touch_backup()
+    today = datetime.date.today()
+    horizon = today + datetime.timedelta(days=warn_days)
 
+    def _status(date_str, label):
+        # iterrows() can upcast a per-row None to float('nan') when the
+        # same column holds real date strings on other rows -- and
+        # bool(float('nan')) is True in Python, so `not date_str` alone
+        # doesn't catch it. Check for NaN explicitly.
+        if not date_str or (isinstance(date_str, float) and math.isnan(date_str)):
+            return None
+        try:
+            d = datetime.date.fromisoformat(date_str)
+        except (ValueError, TypeError):
+            return None
+        if d < today:
+            return f"{label} OVERDUE ({date_str})"
+        if d <= horizon:
+            return f"{label} due {date_str}"
+        return None
 
-def get_trip_requests(status: str | None = None, department_id: int | None = None) -> pd.DataFrame:
-    conn = get_connection()
-    q = """
-    SELECT r.*, dep.name AS department_name,
-           a.driver_id, d.name AS driver_name, a.vehicle_id, v.plate_no
-    FROM trip_requests r
-    JOIN departments dep ON dep.id = r.department_id
-    LEFT JOIN appointments a ON a.id = r.appointment_id
-    LEFT JOIN drivers d ON d.id = a.driver_id
-    LEFT JOIN vehicles v ON v.id = a.vehicle_id
-    """
-    clauses, params = [], []
-    if status:
-        clauses.append("r.status = ?")
-        params.append(status)
-    if department_id is not None:
-        clauses.append("r.department_id = ?")
-        params.append(department_id)
-    if clauses:
-        q += " WHERE " + " AND ".join(clauses)
-    q += " ORDER BY r.created_at DESC"
-    df = pd.read_sql_query(q, conn, params=params)
-    conn.close()
-    return df
+    rows = []
+    for _, v in vehicles.iterrows():
+        issues = [
+            m for m in (
+                _status(v.get("insurance_expiry"), "Insurance"),
+                _status(v.get("revenue_license_expiry"), "Revenue license"),
+                _status(v.get("next_service_due"), "Service"),
+            ) if m
+        ]
+        if issues:
+            row = v.to_dict()
+            row["issues"] = "; ".join(issues)
+            rows.append(row)
 
+    return pd.DataFrame(rows) if rows else vehicles.iloc[0:0].assign(issues=[])
 
-def approve_trip_request(request_id: int, driver_id: int, vehicle_id: int):
-    """Assign a driver+vehicle to a pending request. Runs the same conflict
-    check as a normal booking; on success this creates the appointment and
-    marks the request Approved, atomically (same DB transaction)."""
-    with get_cursor() as cur:
-        cur.execute("SELECT * FROM trip_requests WHERE id = ?", (request_id,))
-        req = cur.fetchone()
-    if req is None:
-        return False, ["Request not found."]
-    if req["status"] != "Pending":
-        return False, [f"Request is already '{req['status']}'."]
-
-    conflicts = check_conflict(req["appt_date"], req["start_time"], req["end_time"],
-                                driver_id, vehicle_id)
-    if conflicts:
-        return False, conflicts
-
-    with get_cursor(commit=True) as cur:
-        cur.execute(
-            """INSERT INTO appointments
-               (appt_date, start_time, end_time, driver_id, vehicle_id, department_id,
-                purpose, status, created_by, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?)""",
-            (req["appt_date"], req["start_time"], req["end_time"], driver_id, vehicle_id,
-             req["department_id"], req["purpose"], "Transport Officer (from request)",
-             datetime.datetime.now().isoformat(timespec="seconds")),
-        )
-        new_appt_id = cur.lastrowid
-        cur.execute(
-            """UPDATE trip_requests SET status = 'Approved', appointment_id = ?, decided_at = ?
-               WHERE id = ?""",
-            (new_appt_id, datetime.datetime.now().isoformat(timespec="seconds"), request_id),
-        )
-    _touch_backup()
-    return True, []
-
-
-def reject_trip_request(request_id: int, note: str = ""):
-    with get_cursor(commit=True) as cur:
-        cur.execute(
-            """UPDATE trip_requests SET status = 'Rejected', decision_note = ?, decided_at = ?
-               WHERE id = ?""",
-            (note, datetime.datetime.now().isoformat(timespec="seconds"), request_id),
-        )
-    _touch_backup()
-
-
-def cancel_trip_request(request_id: int):
-    """Requesting department withdraws its own still-pending request."""
-    with get_cursor(commit=True) as cur:
-        cur.execute(
-            "UPDATE trip_requests SET status = 'Cancelled' WHERE id = ? AND status = 'Pending'",
-            (request_id,),
-        )
-    _touch_backup()
-
-#DEPARTMENT MANAGEMENT + LINKED LOGIN
-def add_department(name, location, lat=None, lon=None):
-    with get_cursor(commit=True) as cur:
-        cur.execute(
-            "INSERT INTO departments (name, location, lat, lon) VALUES (?, ?, ?, ?)",
-            (name, location, lat, lon),
-        )
-        dept_id = cur.lastrowid
-    _touch_backup()
-    return dept_id
-
-
-def create_login(username, password, full_name, role, linked_driver_id=None, linked_department_id=None):
-    """Create a portal login of a given role, optionally linked to a driver or department."""
-    with get_cursor(commit=True) as cur:
-        cur.execute(
-            """INSERT INTO users (username, password_hash, full_name, role, linked_driver_id, linked_department_id)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (username, hash_password(password), full_name, role, linked_driver_id, linked_department_id),
-        )
-    _touch_backup()
-
-
-def username_exists(username: str) -> bool:
-    with get_cursor() as cur:
-        cur.execute("SELECT 1 FROM users WHERE username = ?", (username,))
-        return cur.fetchone() is not None
-
-
-def _touch_backup():
-    """Fire-and-forget Excel backup, imported lazily to avoid circular imports."""
-    try:
-        import excel_sync
-        excel_sync.trigger_backup()
-    except Exception:
-        # Backup failures must never break the live app.
-        pass
-
-
-if __name__ == "__main__":
-    # Standalone smoke test: `python3 database.py`
-    init_db()
-    seed_if_empty()
-    print("Drivers:", len(get_drivers()))
-    print("Vehicles:", len(get_vehicles()))
-    print("Departments:", len(get_departments()))
-    print("Appointments:", len(get_appointments()))
-    print("Login check (admin/BOC@Transport2026):", bool(verify_login("admin", "BOC@Transport2026")))
-
+# DRIVER LEAVE REQUESTS
