@@ -59,7 +59,10 @@ CREATE TABLE IF NOT EXISTS vehicles (
     capacity INTEGER,
     status TEXT NOT NULL DEFAULT 'Available',   -- Available / In Use / Maintenance
     lat REAL,
-    lon REAL
+    lon REAL,
+    insurance_expiry TEXT,          -- YYYY-MM-DD
+    revenue_license_expiry TEXT,    -- YYYY-MM-DD
+    next_service_due TEXT           -- YYYY-MM-DD
 );
 
 CREATE TABLE IF NOT EXISTS departments (
@@ -97,6 +100,18 @@ CREATE TABLE IF NOT EXISTS trip_requests (
     appointment_id INTEGER REFERENCES appointments(id),
     decision_note TEXT,
     decided_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS leave_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    driver_id INTEGER NOT NULL REFERENCES drivers(id),
+    start_date TEXT NOT NULL,       -- YYYY-MM-DD
+    end_date TEXT NOT NULL,         -- YYYY-MM-DD
+    reason TEXT,
+    status TEXT NOT NULL DEFAULT 'Pending',     -- Pending / Approved / Rejected
+    requested_at TEXT,
+    decided_at TEXT,
+    decision_note TEXT
 );
 """
 
