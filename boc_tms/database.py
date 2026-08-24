@@ -200,6 +200,7 @@ def seed_if_empty():
             types = [("Van", 12), ("Car", 4), ("Double Cab", 4), ("Bus", 30), ("Lorry", 2)]
             statuses = ["Available", "Available", "In Use", "Available", "Maintenance"]
             random.seed(7)
+            today = datetime.date.today()
             vehicles = []
             for i in range(10):
                 vtype, cap = random.choice(types)
@@ -207,10 +208,16 @@ def seed_if_empty():
                 status = statuses[i % len(statuses)]
                 lat = 6.9271 + random.uniform(-0.09, 0.09)
                 lon = 79.8612 + random.uniform(-0.09, 0.09)
-                vehicles.append((plate, vtype, cap, status, lat, lon))
+                # spread compliance dates across overdue / due-soon / healthy for a realistic demo
+                insurance_expiry = (today + datetime.timedelta(days=random.randint(-10, 200))).isoformat()
+                revenue_license_expiry = (today + datetime.timedelta(days=random.randint(-5, 250))).isoformat()
+                next_service_due = (today + datetime.timedelta(days=random.randint(-15, 120))).isoformat()
+                vehicles.append((plate, vtype, cap, status, lat, lon,
+                                 insurance_expiry, revenue_license_expiry, next_service_due))
             cur.executemany(
-                """INSERT INTO vehicles (plate_no, vehicle_type, capacity, status, lat, lon)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO vehicles (plate_no, vehicle_type, capacity, status, lat, lon,
+                                          insurance_expiry, revenue_license_expiry, next_service_due)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 vehicles,
             )
 
