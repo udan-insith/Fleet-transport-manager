@@ -134,6 +134,7 @@ def _migrate_schema():
 def init_db():
     with get_cursor(commit=True) as cur:
         cur.executescript(SCHEMA)
+    _migrate_schema()
 
 #AUTH HELPERS
 def hash_password(raw: str) -> str:
