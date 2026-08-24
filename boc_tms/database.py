@@ -115,6 +115,21 @@ CREATE TABLE IF NOT EXISTS leave_requests (
 );
 """
 
+def _migrate_schema():
+    """
+    Adds columns introduced after an existing boc_transport.db was created.
+    SQLite supports ALTER TABLE ... ADD COLUMN, so this upgrades an
+    existing database in place instead of forcing a data reset.
+    """
+    with get_cursor(commit=True) as cur:
+        cur.execute("PRAGMA table_info(vehicles)")
+        existing_cols = {row["name"] for row in cur.fetchall()}
+        for col in ("insurance_expiry", "revenue_license_expiry", "next_service_due"):
+            if col not in existing_cols:
+                cur.execute(f"ALTER TABLE vehicles ADD COLUMN {col} TEXT")
+
+
+
 
 def init_db():
     with get_cursor(commit=True) as cur:
