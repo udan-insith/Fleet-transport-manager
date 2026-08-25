@@ -76,6 +76,7 @@ def inject_theme():
         }}
         .boc-logo-badge {{
             background-color: {utils.BOC_GOLD};
+            
             color: {utils.BOC_NAVY};
             font-weight: 800;
             font-size: 20px;
