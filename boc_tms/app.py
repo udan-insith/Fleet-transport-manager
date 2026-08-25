@@ -46,7 +46,7 @@ def inject_theme():
         div.stButton > button, div.stFormSubmitButton > button {{
             background-color: {utils.BOC_GOLD};
             color: {utils.BOC_NAVY};
-            font-weight: 700;
+            font-weight: 650;
             border: none;
             border-radius: 6px;
         }}
