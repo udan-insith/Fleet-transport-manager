@@ -442,3 +442,91 @@ def csv_download_button(df: pd.DataFrame, label: str, filename: str, key: str):
         mime="text/csv",
         key=key,
     )
+
+# PAGE REPORTS ANALYTICS
+def page_reports():
+    render_header("Reports &amp; Analytics")
+ 
+    today = datetime.date.today()
+    c1, c2 = st.columns(2)
+    with c1:
+        date_from = st.date_input("From", value=today - datetime.timedelta(days=90), key="rep_from")
+    with c2:
+        date_to = st.date_input("To", value=today + datetime.timedelta(days=30), key="rep_to")
+ 
+    appts = database.get_appointments(date_from.isoformat(), date_to.isoformat())
+    active_appts = appts[appts["status"] != "Cancelled"]
+ 
+    st.write("")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Trips in range", len(active_appts))
+    m2.metric("Completed", int((active_appts["status"] == "Completed").sum()))
+    m3.metric("Scheduled", int((active_appts["status"] == "Scheduled").sum()))
+    total_hours = sum(
+        utils.minutes_between(r["start_time"], r["end_time"]) for _, r in active_appts.iterrows()
+    ) / 60 if not active_appts.empty else 0
+    m4.metric("Total vehicle-hours", f"{total_hours:.1f}")
+ 
+    st.write("")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.subheader("Trips by department")
+        if active_appts.empty:
+            st.caption("No trips in this date range.")
+        else:
+            by_dept = active_appts.groupby("department_name").size().sort_values(ascending=False)
+            st.bar_chart(by_dept)
+ 
+    with col_b:
+        st.subheader("Trips by driver")
+        if active_appts.empty:
+            st.caption("No trips in this date range.")
+        else:
+            by_driver = active_appts.groupby("driver_name").size().sort_values(ascending=False).head(10)
+            st.bar_chart(by_driver)
+ 
+    st.subheader("Monthly trip volume")
+    if active_appts.empty:
+        st.caption("No trips in this date range.")
+    else:
+        monthly = active_appts.copy()
+        monthly["month"] = pd.to_datetime(monthly["appt_date"]).dt.to_period("M").astype(str)
+        by_month = monthly.groupby("month").size()
+        st.line_chart(by_month)
+ 
+    st.subheader("Vehicle utilization (hours booked)")
+    if active_appts.empty:
+        st.caption("No trips in this date range.")
+    else:
+        hours = active_appts.copy()
+        hours["hours"] = hours.apply(
+            lambda r: utils.minutes_between(r["start_time"], r["end_time"]) / 60, axis=1
+        )
+        by_vehicle = hours.groupby("plate_no")["hours"].sum().sort_values(ascending=False)
+        st.bar_chart(by_vehicle)
+ 
+    st.write("")
+    st.subheader("🔧 Fleet compliance alerts")
+    st.caption("Vehicles with insurance, revenue license, or service due within 30 days (or overdue).")
+    attention = database.vehicles_needing_attention(warn_days=30)
+    if attention.empty:
+        st.success("No vehicles currently need attention.", icon="✅")
+    else:
+        st.dataframe(
+            attention[["plate_no", "vehicle_type", "status", "issues"]].rename(columns={
+                "plate_no": "Vehicle", "vehicle_type": "Type", "status": "Status", "issues": "Issues",
+            }),
+            use_container_width=True, hide_index=True,
+        )
+ 
+    st.write("")
+    st.subheader("Export data")
+    e1, e2, e3, e4 = st.columns(4)
+    with e1:
+        csv_download_button(appts, "Appointments CSV", "appointments.csv", "exp_appts")
+    with e2:
+        csv_download_button(database.get_drivers(), "Drivers CSV", "drivers.csv", "exp_drivers")
+    with e3:
+        csv_download_button(database.get_vehicles(), "Vehicles CSV", "vehicles.csv", "exp_vehicles")
+    with e4:
+        csv_download_button(database.get_trip_requests(), "Trip Requests CSV", "trip_requests.csv", "exp_reqs")
