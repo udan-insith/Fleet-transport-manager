@@ -885,3 +885,48 @@ def tab_manage_departments():
                 else:
                     st.success(f"Department '{name}' added.")
                 st.rerun()
+
+# TAB LEAVE REQUESTS
+def tab_leave_requests():
+    st.subheader("Driver Leave Requests")
+ 
+    status_filter = st.radio("Show", ["Pending", "Approved", "Rejected", "All"],
+                              horizontal=True, key="leave_status_filter")
+    leaves = database.get_leave_requests(status=None if status_filter == "All" else status_filter)
+ 
+    if leaves.empty:
+        st.caption("No leave requests in this category.")
+        return
+ 
+    st.dataframe(
+        leaves[["id", "driver_name", "start_date", "end_date", "reason", "status"]].rename(columns={
+            "id": "ID", "driver_name": "Driver", "start_date": "From", "end_date": "To",
+            "reason": "Reason", "status": "Status",
+        }),
+        use_container_width=True, hide_index=True,
+    )
+ 
+    pending = database.get_leave_requests(status="Pending")
+    if pending.empty:
+        return
+ 
+    st.markdown("**Review a pending leave request**")
+    options = {
+        f"#{r['id']} — {r['driver_name']} — {r['start_date']} to {r['end_date']}": r["id"]
+        for _, r in pending.iterrows()
+    }
+    choice = st.selectbox("Request", list(options.keys()), key="leave_review_select")
+ 
+    a1, a2 = st.columns(2)
+    with a1:
+        if st.button("✅ Approve Leave", type="primary", use_container_width=True):
+            database.approve_leave_request(options[choice])
+            st.success("Leave approved.")
+            st.rerun()
+    with a2:
+        with st.popover("❌ Reject leave", use_container_width=True):
+            note = st.text_area("Reason (optional)", key="leave_reject_note")
+            if st.button("Confirm rejection", key="leave_confirm_reject"):
+                database.reject_leave_request(options[choice], note)
+                st.success("Leave rejected.")
+                st.rerun()
