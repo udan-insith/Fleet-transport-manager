@@ -239,4 +239,76 @@ def page_dashboard():
     st.caption(
         f"Excel backup mirror: `{excel_sync.BACKUP_PATH}` — refreshed automatically on every booking change."
     )
+
+# LIVE GPS
+def page_live_map():
+    render_header("Live GPS Map &mdash; Vehicle &amp; Driver Tracking (Mock Feed)")
  
+    top_l, top_r = st.columns([3, 1])
+    with top_r:
+        if st.button("🔄 Simulate GPS Ping", use_container_width=True):
+            database.nudge_driver_locations()
+            st.success("Positions updated for on-trip vehicles.")
+ 
+    drivers = database.get_drivers()
+    vehicles = database.get_vehicles()
+    departments = database.get_departments()
+ 
+    fmap = folium.Map(location=[6.9271, 79.8612], zoom_start=8, tiles="CartoDB positron")
+ 
+    for _, d in drivers.iterrows():
+        if pd.isna(d["lat"]) or pd.isna(d["lon"]):
+            continue
+        color = utils.DRIVER_STATUS_COLORS.get(d["status"], "#7F8C8D")
+        folium.CircleMarker(
+            location=[d["lat"], d["lon"]],
+            radius=8,
+            color=color,
+            fill=True,
+            fill_color=color,
+            fill_opacity=0.9,
+            tooltip=f"Driver: {d['name']} ({d['status']})",
+            popup=folium.Popup(
+                f"<b>{d['name']}</b><br>Status: {d['status']}<br>"
+                f"License: {d['license_no']}<br>Base: {d['base_location']}",
+                max_width=220,
+            ),
+        ).add_to(fmap)
+    for _, v in vehicles.iterrows():
+        if pd.isna(v["lat"]) or pd.isna(v["lon"]):
+            continue
+        color = utils.VEHICLE_STATUS_COLORS.get(v["status"], "#7F8C8D")
+        folium.Marker(
+            location=[v["lat"], v["lon"]],
+            tooltip=f"Vehicle: {v['plate_no']} ({v['status']})",
+            popup=folium.Popup(
+                f"<b>{v['plate_no']}</b><br>Type: {v['vehicle_type']}<br>Status: {v['status']}",
+                max_width=200,
+            ),
+            icon=folium.Icon(color="orange" if v["status"] == "In Use" else
+                              ("gray" if v["status"] == "Maintenance" else "green"),
+                              icon="car", prefix="fa"),
+        ).add_to(fmap)
+ 
+    for _, dep in departments.iterrows():
+        folium.Marker(
+            location=[dep["lat"], dep["lon"]],
+            tooltip=f"Department: {dep['name']}",
+            popup=f"<b>{dep['name']}</b><br>{dep['location']}",
+            icon=folium.Icon(color="darkblue", icon="building", prefix="fa"),
+        ).add_to(fmap)
+ 
+    with top_l:
+        st.caption(
+            "🟢 Available &nbsp;&nbsp; 🟡 On Trip / In Use &nbsp;&nbsp; "
+            "⚪ Off Duty &nbsp;&nbsp; 🔴 On Leave / Maintenance &nbsp;&nbsp; 🔵 Department"
+        )
+ 
+    st_folium(fmap, use_container_width=True, height=560, returned_objects=[])
+ 
+    st.info(
+        "This is a **mock** GPS feed for demonstration: driver/vehicle coordinates are "
+        "seeded values that shift slightly when you click 'Simulate GPS Ping'. Wire this "
+        "up to a real telematics/GPS API for production tracking.",
+        icon="ℹ️",
+    )
