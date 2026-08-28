@@ -530,3 +530,92 @@ def page_reports():
         csv_download_button(database.get_vehicles(), "Vehicles CSV", "vehicles.csv", "exp_vehicles")
     with e4:
         csv_download_button(database.get_trip_requests(), "Trip Requests CSV", "trip_requests.csv", "exp_reqs")
+
+# PAGE EMPLOYEE PORTAL
+def tab_add_appointment():
+    st.subheader("New Appointment / Booking")
+ 
+    drivers = database.get_drivers()
+    vehicles = database.get_vehicles()
+    departments = database.get_departments()
+ 
+    driver_labels = {f"{r['name']} ({r['status']}) — ID {r['id']}": r["id"] for _, r in drivers.iterrows()}
+    vehicle_labels = {f"{r['plate_no']} - {r['vehicle_type']} ({r['status']})": r["id"]
+                       for _, r in vehicles.iterrows()}
+ 
+    with st.form("add_appt_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            appt_date = st.date_input("Date", value=datetime.date.today())
+            start_time = st.selectbox("Start time", utils.TIME_OPTIONS, index=4)
+            driver_label = st.selectbox("Driver", list(driver_labels.keys()))
+        with col2:
+            end_time = st.selectbox("End time", utils.TIME_OPTIONS, index=8)
+            vehicle_label = st.selectbox("Vehicle", list(vehicle_labels.keys()))
+            department_name = st.selectbox("Department / Destination", departments["name"].tolist())
+ 
+        purpose = st.text_area("Purpose of trip", placeholder="e.g. Cash in transit to Kandy Regional Office")
+        submitted = st.form_submit_button("Book Appointment", type="primary", use_container_width=True)
+ 
+    if submitted:
+        driver_id = int(driver_labels[driver_label])
+        vehicle_id = int(vehicle_labels[vehicle_label])
+        department_id = int(departments[departments["name"] == department_name].iloc[0]["id"])
+ 
+        if end_time <= start_time:
+            st.error("End time must be after start time.")
+            return
+ 
+        ok, conflicts = database.add_appointment(
+            appt_date.isoformat(), start_time, end_time,
+            driver_id, vehicle_id, department_id, purpose,
+            created_by=auth.current_user()["username"],
+        )
+        if ok:
+            st.success("Appointment booked successfully. Excel backup syncing in the background.")
+            st.rerun()
+        else:
+            st.error("Booking rejected — conflict(s) detected:")
+            for c in conflicts:
+                st.write(f"- {c}")
+ 
+ 
+def tab_manage_appointments():
+    st.subheader("Manage Appointments")
+ 
+    c1, c2 = st.columns(2)
+    with c1:
+        date_from = st.date_input("From", value=datetime.date.today() - datetime.timedelta(days=7))
+    with c2:
+        date_to = st.date_input("To", value=datetime.date.today() + datetime.timedelta(days=30))
+ 
+    appts = database.get_appointments(date_from.isoformat(), date_to.isoformat())
+    if appts.empty:
+        st.caption("No appointments in this range.")
+        return
+ 
+    display_cols = ["id", "appt_date", "start_time", "end_time", "driver_name",
+                     "plate_no", "department_name", "purpose", "status"]
+    st.dataframe(
+        appts[display_cols].rename(columns={
+            "id": "ID", "appt_date": "Date", "start_time": "Start", "end_time": "End",
+            "driver_name": "Driver", "plate_no": "Vehicle",
+            "department_name": "Department", "purpose": "Purpose", "status": "Status",
+        }),
+        use_container_width=True, hide_index=True,
+    )
+    csv_download_button(appts, "Export Appointments CSV", "appointments.csv", "exp_appts_tab")
+ 
+    st.markdown("**Update appointment status**")
+    c3, c4, c5 = st.columns([1, 1, 1])
+    with c3:
+        appt_id = st.selectbox("Appointment ID", appts["id"].tolist())
+    with c4:
+        new_status = st.selectbox("New status", ["Scheduled", "Completed", "Cancelled"])
+    with c5:
+        st.write("")
+        st.write("")
+        if st.button("Apply Update", use_container_width=True):
+            database.update_appointment_status(int(appt_id), new_status)
+            st.success(f"Appointment #{appt_id} set to '{new_status}'.")
+            st.rerun()
