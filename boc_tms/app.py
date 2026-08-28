@@ -965,4 +965,126 @@ def page_employee_portal():
         tab_manage_vehicles()
     with tabs[6]:
         tab_manage_departments()
+
+
+# PAGE : DRIVER PORTAL
+def page_driver_portal():
+    render_header("Driver Portal &mdash; My Schedule")
  
+    if not auth.require_role_or_login(
+        auth.ROLE_DRIVER, "driver1", "Driver@123",
+        "For drivers: view your assigned trips and update your own availability."
+    ):
+        return
+ 
+    user = auth.current_user()
+    driver_id = user["linked_driver_id"]
+    st.sidebar.markdown(f"**Signed in as:** {user['full_name']} (Driver)")
+    auth.logout_button()
+ 
+    drivers = database.get_drivers()
+    my_row = drivers[drivers["id"] == driver_id]
+    if my_row.empty:
+        st.error("Your linked driver record could not be found. Contact the Transport Officer.")
+        return
+    my_row = my_row.iloc[0]
+ 
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        st.subheader(f"Welcome, {my_row['name']}")
+        st.caption(f"License: {my_row['license_no']} · Base: {my_row['base_location']} · "
+                   f"Phone: {my_row['phone']}")
+    with c2:
+        st.markdown(f"Current status: {status_pill(my_row['status'], utils.DRIVER_STATUS_COLORS)}",
+                    unsafe_allow_html=True)
+ 
+    with st.form("driver_status_form"):
+        new_status = st.selectbox("Update my status", list(utils.DRIVER_STATUS_COLORS.keys()),
+                                   index=list(utils.DRIVER_STATUS_COLORS.keys()).index(my_row["status"]))
+        if st.form_submit_button("Update Status", type="primary"):
+            database.update_driver_status(int(driver_id), new_status)
+            st.success("Status updated.")
+            st.rerun()
+ 
+    st.write("")
+    today = datetime.date.today()
+    all_my_appts = database.get_appointments()
+    all_my_appts = all_my_appts[
+        (all_my_appts["driver_id"] == driver_id) & (all_my_appts["status"] != "Cancelled")
+    ]
+ 
+    todays = all_my_appts[all_my_appts["appt_date"] == today.isoformat()]
+    st.subheader("Today's assignments")
+    if todays.empty:
+        st.caption("No trips assigned for today.")
+    else:
+        st.dataframe(
+            todays[["start_time", "end_time", "department_name", "plate_no", "purpose", "status"]].rename(
+                columns={"start_time": "Start", "end_time": "End", "department_name": "Department",
+                         "plate_no": "Vehicle", "purpose": "Purpose", "status": "Status"}),
+            use_container_width=True, hide_index=True,
+        )
+ 
+    st.subheader("Upcoming assignments (next 14 days)")
+    upcoming = all_my_appts[
+        (all_my_appts["appt_date"] > today.isoformat()) &
+        (all_my_appts["appt_date"] <= (today + datetime.timedelta(days=14)).isoformat())
+    ]
+    if upcoming.empty:
+        st.caption("Nothing scheduled in the next two weeks.")
+    else:
+        st.dataframe(
+            upcoming[["appt_date", "start_time", "end_time", "department_name", "plate_no", "purpose", "status"]]
+            .rename(columns={"appt_date": "Date", "start_time": "Start", "end_time": "End",
+                             "department_name": "Department", "plate_no": "Vehicle",
+                             "purpose": "Purpose", "status": "Status"}),
+            use_container_width=True, hide_index=True,
+        )
+ 
+    st.write("")
+    st.subheader("Mark a trip completed")
+    schedulable = all_my_appts[all_my_appts["status"] == "Scheduled"]
+    if schedulable.empty:
+        st.caption("No scheduled trips to update.")
+    else:
+        options = {
+            f"#{r['id']} — {r['appt_date']} {r['start_time']}-{r['end_time']} — {r['department_name']}": r["id"]
+            for _, r in schedulable.iterrows()
+        }
+        choice = st.selectbox("Trip", list(options.keys()))
+        if st.button("Mark as Completed"):
+            database.update_appointment_status(int(options[choice]), "Completed")
+            st.success("Trip marked completed.")
+            st.rerun()
+ 
+    st.write("")
+    st.subheader("🌴 Request leave")
+    with st.form("driver_leave_form"):
+        lc1, lc2 = st.columns(2)
+        with lc1:
+            leave_start = st.date_input("From", value=today)
+        with lc2:
+            leave_end = st.date_input("To", value=today)
+        reason = st.text_area("Reason", placeholder="e.g. Personal / medical / family event")
+        if st.form_submit_button("Submit Leave Request", type="primary"):
+            if leave_end < leave_start:
+                st.error("End date must be on or after the start date.")
+            else:
+                database.add_leave_request(int(driver_id), leave_start.isoformat(),
+                                            leave_end.isoformat(), reason.strip())
+                st.success("Leave request submitted for Transport Officer approval.")
+                st.rerun()
+ 
+    my_leaves = database.get_leave_requests(driver_id=int(driver_id))
+    if not my_leaves.empty:
+        st.markdown("**My leave request history**")
+        leave_status_colors = {"Pending": "#FFCC00", "Approved": "#2ECC71", "Rejected": "#E74C3C"}
+        for _, lv in my_leaves.iterrows():
+            with st.container(border=True):
+                t1, t2 = st.columns([3, 1])
+                with t1:
+                    st.markdown(f"**{lv['start_date']} → {lv['end_date']}** — {lv['reason'] or '—'}")
+                with t2:
+                    st.markdown(status_pill(lv["status"], leave_status_colors), unsafe_allow_html=True)
+                if lv["status"] == "Rejected" and lv["decision_note"]:
+                    st.caption(f"Reason: {lv['decision_note']}")
