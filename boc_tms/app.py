@@ -430,3 +430,15 @@ def page_scheduler():
         "driver or vehicle from being double-booked into overlapping time slots.",
         icon="🛡️",
     )
+
+# CSV EXPORT HELPER
+def csv_download_button(df: pd.DataFrame, label: str, filename: str, key: str):
+    if df.empty:
+        return
+    st.download_button(
+        label=f"⬇️ {label}",
+        data=df.to_csv(index=False).encode("utf-8"),
+        file_name=filename,
+        mime="text/csv",
+        key=key,
+    )
