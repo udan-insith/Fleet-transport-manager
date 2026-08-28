@@ -142,4 +142,7 @@ def render_header(subtitle: str):
         """,
         unsafe_allow_html=True,
     )
- 
+
+def status_pill(status: str, color_map: dict) -> str:
+    color = color_map.get(status, "#7F8C8D")
+    return f'<span class="status-pill" style="background-color:{color};">{status}</span>'
