@@ -1162,3 +1162,41 @@ def page_department_portal():
                 if st.button("Withdraw request", key=f"cancel_{r['id']}"):
                     database.cancel_trip_request(int(r["id"]))
                     st.rerun()
+
+# MAIN / NAVIGATION
+def main():
+    inject_theme()
+ 
+    st.sidebar.markdown(
+        "<h2 style='color:#FFCC00;'>BOC WPS Transport</h2>", unsafe_allow_html=True
+    )
+    page = st.sidebar.radio(
+        "Navigate",
+        ["Live Dashboard", "Live GPS Map", "Monthly Scheduler", "Reports & Analytics",
+         "Transport Officer Portal", "Driver Portal", "Department Portal"],
+        label_visibility="collapsed",
+    )
+    st.sidebar.markdown("---")
+    st.sidebar.caption(
+        f"Database: `{database.DB_PATH}`\n\nExcel backup: `{excel_sync.BACKUP_PATH}`"
+    )
+    st.sidebar.caption(f"Server time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+ 
+    if page == "Live Dashboard":
+        page_dashboard()
+    elif page == "Live GPS Map":
+        page_live_map()
+    elif page == "Monthly Scheduler":
+        page_scheduler()
+    elif page == "Reports & Analytics":
+        page_reports()
+    elif page == "Transport Officer Portal":
+        page_employee_portal()
+    elif page == "Driver Portal":
+        page_driver_portal()
+    elif page == "Department Portal":
+        page_department_portal()
+ 
+ 
+if __name__ == "__main__":
+    main()
