@@ -684,3 +684,92 @@ def tab_manage_drivers():
                     database.update_driver_status(int(driver_id), new_status)
                     st.success("Driver status updated.")
                     st.rerun()
+
+
+# MANAGE VEHICLES
+def tab_manage_vehicles():
+    st.subheader("Manage Vehicles")
+    vehicles = database.get_vehicles()
+ 
+    attention = database.vehicles_needing_attention(warn_days=30)
+    if not attention.empty:
+        st.warning(f"⚠️ {len(attention)} vehicle(s) need attention — see Reports & Analytics for details, "
+                   f"or update dates below.", icon="🔧")
+ 
+    st.dataframe(
+        vehicles.rename(columns={
+            "plate_no": "Plate No.", "vehicle_type": "Type",
+            "capacity": "Capacity", "status": "Status",
+            "insurance_expiry": "Insurance Exp.", "revenue_license_expiry": "Revenue Lic. Exp.",
+            "next_service_due": "Next Service",
+        })[["id", "Plate No.", "Type", "Capacity", "Status",
+            "Insurance Exp.", "Revenue Lic. Exp.", "Next Service"]],
+        use_container_width=True, hide_index=True,
+    )
+    csv_download_button(vehicles, "Export Vehicles CSV", "vehicles.csv", "exp_vehicles_tab")
+ 
+    col1, col2 = st.columns(2)
+    with col1:
+        with st.expander("➕ Add new vehicle"):
+            with st.form("add_vehicle_form"):
+                plate_no = st.text_input("Plate number")
+                vehicle_type = st.selectbox("Type", ["Van", "Car", "Double Cab", "Bus", "Lorry"])
+                capacity = st.number_input("Capacity", min_value=1, max_value=60, value=4)
+                st.markdown("---")
+                st.caption("Compliance dates (optional, can be added later)")
+                insurance_expiry = st.date_input("Insurance expiry", value=None, key="new_veh_ins")
+                revenue_license_expiry = st.date_input("Revenue license expiry", value=None, key="new_veh_rev")
+                next_service_due = st.date_input("Next service due", value=None, key="new_veh_svc")
+                if st.form_submit_button("Add Vehicle", use_container_width=True):
+                    if plate_no:
+                        try:
+                            database.add_vehicle(
+                                plate_no, vehicle_type, int(capacity), lat=6.9271, lon=79.8612,
+                                insurance_expiry=insurance_expiry.isoformat() if insurance_expiry else None,
+                                revenue_license_expiry=revenue_license_expiry.isoformat() if revenue_license_expiry else None,
+                                next_service_due=next_service_due.isoformat() if next_service_due else None,
+                            )
+                            st.success(f"Vehicle '{plate_no}' added.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Could not add vehicle (duplicate plate?): {e}")
+                    else:
+                        st.error("Plate number is required.")
+ 
+        with st.expander("🔧 Update compliance dates"):
+            with st.form("update_compliance_form"):
+                vehicle_id_c = st.selectbox("Vehicle", vehicles["id"].tolist(),
+                                             format_func=lambda i: vehicles[vehicles["id"] == i].iloc[0]["plate_no"],
+                                             key="compliance_vehicle_select")
+                current = vehicles[vehicles["id"] == vehicle_id_c].iloc[0]
+ 
+                def _parse(d):
+                    try:
+                        return datetime.date.fromisoformat(d) if d else None
+                    except (TypeError, ValueError):
+                        return None
+ 
+                ins = st.date_input("Insurance expiry", value=_parse(current["insurance_expiry"]))
+                rev = st.date_input("Revenue license expiry", value=_parse(current["revenue_license_expiry"]))
+                svc = st.date_input("Next service due", value=_parse(current["next_service_due"]))
+                if st.form_submit_button("Update Compliance Dates", use_container_width=True):
+                    database.update_vehicle_compliance(
+                        int(vehicle_id_c),
+                        insurance_expiry=ins.isoformat() if ins else None,
+                        revenue_license_expiry=rev.isoformat() if rev else None,
+                        next_service_due=svc.isoformat() if svc else None,
+                    )
+                    st.success("Compliance dates updated.")
+                    st.rerun()
+ 
+    with col2:
+        with st.expander("🔄 Update vehicle status"):
+            with st.form("update_vehicle_form"):
+                vehicle_id = st.selectbox("Vehicle", vehicles["id"].tolist(),
+                                           format_func=lambda i: vehicles[vehicles["id"] == i].iloc[0]["plate_no"])
+                new_status = st.selectbox("Status", list(utils.VEHICLE_STATUS_COLORS.keys()))
+                if st.form_submit_button("Update Status", use_container_width=True):
+                    database.update_vehicle_status(int(vehicle_id), new_status)
+                    st.success("Vehicle status updated.")
+                    st.rerun()
+ 
