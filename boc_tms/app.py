@@ -312,3 +312,53 @@ def page_live_map():
         "up to a real telematics/GPS API for production tracking.",
         icon="ℹ️",
     )
+
+# MONTHLY SCHEDULER
+def build_matrix(entity_df, entity_id_col, entity_label_col, appts, days_in_month, year, month):
+    """
+    Build a rows=entity x cols=day grid of department names (comma-joined if >1).
+ 
+    Indexed internally by the entity's unique DB id (never by name/plate, which
+    can collide) and only relabeled for display at the very end, so `.at[]`
+    lookups always resolve to a single scalar cell.
+    """
+    entity_ids = entity_df["id"].tolist()
+    day_cols = [str(d) for d in range(1, days_in_month + 1)]
+    grid = pd.DataFrame("", index=entity_ids, columns=day_cols)
+ 
+    for _, row in appts.iterrows():
+        appt_date = datetime.date.fromisoformat(row["appt_date"])
+        if appt_date.year != year or appt_date.month != month:
+            continue
+        entity_id = row[entity_id_col]            # e.g. row["driver_id"] or row["vehicle_id"]
+        if entity_id not in grid.index:
+            continue
+        day_col = str(appt_date.day)
+        existing = grid.at[entity_id, day_col]
+        cell_text = row["department_name"]
+        grid.at[entity_id, day_col] = f"{existing}, {cell_text}" if existing else cell_text
+ 
+    # Make row labels unique for display (e.g. "Nimal Perera (#3)") in case
+    # two drivers/vehicles happen to share the same name/plate.
+    label_counts = entity_df[entity_label_col].value_counts()
+    display_labels = []
+    for _, r in entity_df.iterrows():
+        base = r[entity_label_col]
+        display_labels.append(f"{base} (#{r['id']})" if label_counts[base] > 1 else base)
+    grid.index = display_labels
+    return grid
+ 
+ 
+def style_matrix(grid: pd.DataFrame, dept_list: list[str]):
+    def color_cell(val):
+        if not val:
+            return "background-color: #FFFFFF; color: #C6C6C6;"
+        first_dept = val.split(",")[0].strip()
+        bg = utils.department_color(first_dept, dept_list)
+        return f"background-color: {bg}22; color: {utils.BOC_NAVY}; font-weight: 600; border-left: 4px solid {bg};"
+ 
+    styler = grid.style
+    # pandas >= 2.1 renamed Styler.applymap to Styler.map; support both.
+    if hasattr(styler, "map"):
+        return styler.map(color_cell)
+    return styler.applymap(color_cell)
