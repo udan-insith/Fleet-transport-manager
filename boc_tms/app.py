@@ -619,3 +619,68 @@ def tab_manage_appointments():
             database.update_appointment_status(int(appt_id), new_status)
             st.success(f"Appointment #{appt_id} set to '{new_status}'.")
             st.rerun()
+
+# MANAGE DRIVER TAB
+def tab_manage_drivers():
+    st.subheader("Manage Drivers")
+    drivers = database.get_drivers()
+    st.dataframe(
+        drivers.rename(columns={
+            "name": "Name", "license_no": "License No.", "phone": "Phone",
+            "base_location": "Base", "status": "Status",
+        })[["id", "Name", "License No.", "Phone", "Base", "Status"]],
+        use_container_width=True, hide_index=True,
+    )
+    csv_download_button(drivers, "Export Drivers CSV", "drivers.csv", "exp_drivers_tab")
+ 
+    col1, col2 = st.columns(2)
+    with col1:
+        with st.expander("➕ Add new driver (optionally with a portal login)"):
+            with st.form("add_driver_form"):
+                name = st.text_input("Full name")
+                license_no = st.text_input("License number")
+                phone = st.text_input("Phone")
+                base_location = st.text_input("Base location", value="Head Office Depot")
+ 
+                st.markdown("---")
+                create_login = st.checkbox("Also create a Driver Portal login for this driver")
+                login_username = st.text_input("Login username", disabled=not create_login, key="drv_login_user")
+                login_password = st.text_input("Login password", type="password",
+                                                 disabled=not create_login, key="drv_login_pass")
+ 
+                submitted = st.form_submit_button("Add Driver", use_container_width=True)
+ 
+            if submitted:
+                if not (name and license_no):
+                    st.error("Name and license number are required.")
+                elif create_login and not (login_username and login_password):
+                    st.error("Provide a username and password, or untick the login checkbox.")
+                elif create_login and database.username_exists(login_username.strip()):
+                    st.error("That username is already taken.")
+                else:
+                    with database.get_cursor(commit=True) as cur:
+                        cur.execute(
+                            """INSERT INTO drivers (name, license_no, phone, base_location, status, lat, lon)
+                               VALUES (?, ?, ?, ?, 'Available', 6.9271, 79.8612)""",
+                            (name, license_no, phone, base_location),
+                        )
+                        new_driver_id = cur.lastrowid
+                    database._touch_backup()
+                    if create_login:
+                        database.create_login(login_username.strip(), login_password, name,
+                                               "Driver", linked_driver_id=new_driver_id)
+                        st.success(f"Driver '{name}' added with a portal login.")
+                    else:
+                        st.success(f"Driver '{name}' added.")
+                    st.rerun()
+ 
+    with col2:
+        with st.expander("🔄 Update driver status"):
+            with st.form("update_driver_form"):
+                driver_id = st.selectbox("Driver", drivers["id"].tolist(),
+                                          format_func=lambda i: drivers[drivers["id"] == i].iloc[0]["name"])
+                new_status = st.selectbox("Status", list(utils.DRIVER_STATUS_COLORS.keys()))
+                if st.form_submit_button("Update Status", use_container_width=True):
+                    database.update_driver_status(int(driver_id), new_status)
+                    st.success("Driver status updated.")
+                    st.rerun()
