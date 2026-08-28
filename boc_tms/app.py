@@ -1088,3 +1088,77 @@ def page_driver_portal():
                     st.markdown(status_pill(lv["status"], leave_status_colors), unsafe_allow_html=True)
                 if lv["status"] == "Rejected" and lv["decision_note"]:
                     st.caption(f"Reason: {lv['decision_note']}")
+
+# PAGE : DEPARTMENT PORTAL
+def page_department_portal():
+    render_header("Department Portal &mdash; Transport Requests")
+ 
+    if not auth.require_role_or_login(
+        auth.ROLE_DEPARTMENT, "kandy_branch", "Dept@123",
+        "For requesting branches/divisions: submit a transport request and track its status."
+    ):
+        return
+ 
+    user = auth.current_user()
+    department_id = user["linked_department_id"]
+    st.sidebar.markdown(f"**Signed in as:** {user['full_name']} (Department)")
+    auth.logout_button()
+ 
+    departments = database.get_departments()
+    my_dept = departments[departments["id"] == department_id]
+    if my_dept.empty:
+        st.error("Your linked department record could not be found. Contact the Transport Officer.")
+        return
+    my_dept = my_dept.iloc[0]
+ 
+    st.subheader(f"{my_dept['name']}")
+    st.caption(f"Location: {my_dept['location']}")
+ 
+    st.write("")
+    st.subheader("Submit a new transport request")
+    st.caption("Your request goes to the Transport Officer for approval and driver/vehicle assignment.")
+    with st.form("new_request_form"):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            req_date = st.date_input("Date", value=datetime.date.today())
+        with c2:
+            start_time = st.selectbox("Start time", utils.TIME_OPTIONS, index=4)
+        with c3:
+            end_time = st.selectbox("End time", utils.TIME_OPTIONS, index=8)
+        purpose = st.text_area("Purpose", placeholder="e.g. Document courier to Head Office")
+        submitted = st.form_submit_button("Submit Request", type="primary", use_container_width=True)
+ 
+    if submitted:
+        if end_time <= start_time:
+            st.error("End time must be after start time.")
+        elif not purpose.strip():
+            st.error("Please describe the purpose of the trip.")
+        else:
+            database.add_trip_request(int(department_id), req_date.isoformat(), start_time, end_time,
+                                       purpose.strip(), user["username"])
+            st.success("Request submitted. You'll see its status below once the Transport Officer responds.")
+            st.rerun()
+ 
+    st.write("")
+    st.subheader("My request history")
+    my_requests = database.get_trip_requests(department_id=int(department_id))
+    if my_requests.empty:
+        st.caption("No requests submitted yet.")
+        return
+ 
+    status_colors = {"Pending": "#FFCC00", "Approved": "#2ECC71", "Rejected": "#E74C3C", "Cancelled": "#95A5A6"}
+    for _, r in my_requests.iterrows():
+        with st.container(border=True):
+            top1, top2 = st.columns([3, 1])
+            with top1:
+                st.markdown(f"**{r['appt_date']}**, {r['start_time']}–{r['end_time']} — {r['purpose']}")
+            with top2:
+                st.markdown(status_pill(r["status"], status_colors), unsafe_allow_html=True)
+            if r["status"] == "Approved":
+                st.caption(f"Assigned: {r['driver_name']} driving {r['plate_no']}")
+            elif r["status"] == "Rejected" and r["decision_note"]:
+                st.caption(f"Reason: {r['decision_note']}")
+            elif r["status"] == "Pending":
+                if st.button("Withdraw request", key=f"cancel_{r['id']}"):
+                    database.cancel_trip_request(int(r["id"]))
+                    st.rerun()
