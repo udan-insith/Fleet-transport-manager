@@ -843,3 +843,45 @@ def tab_pending_requests():
                 database.reject_trip_request(req_options[req_choice], note)
                 st.success("Request rejected.")
                 st.rerun()
+
+# TAB MANAGE DRIVERS
+def tab_manage_departments():
+    st.subheader("Manage Departments / Branches")
+    departments = database.get_departments()
+    st.dataframe(
+        departments.rename(columns={
+            "name": "Name", "location": "Location", "lat": "Latitude", "lon": "Longitude",
+        })[["id", "Name", "Location", "Latitude", "Longitude"]],
+        use_container_width=True, hide_index=True,
+    )
+ 
+    with st.expander("➕ Add new department / branch (optionally with a portal login)"):
+        with st.form("add_department_form"):
+            name = st.text_input("Department / branch name")
+            location = st.text_input("Location (city/area)")
+            lat = st.number_input("Latitude", value=6.9271, format="%.4f")
+            lon = st.number_input("Longitude", value=79.8612, format="%.4f")
+ 
+            st.markdown("---")
+            create_login = st.checkbox("Also create a Department Portal login for this branch")
+            login_username = st.text_input("Login username", disabled=not create_login)
+            login_password = st.text_input("Login password", type="password", disabled=not create_login)
+ 
+            submitted = st.form_submit_button("Add Department", use_container_width=True)
+ 
+        if submitted:
+            if not name:
+                st.error("Department name is required.")
+            elif create_login and not (login_username and login_password):
+                st.error("Provide a username and password, or untick the login checkbox.")
+            elif create_login and database.username_exists(login_username.strip()):
+                st.error("That username is already taken.")
+            else:
+                dept_id = database.add_department(name, location, lat, lon)
+                if create_login:
+                    database.create_login(login_username.strip(), login_password, name,
+                                           "Department", linked_department_id=dept_id)
+                    st.success(f"Department '{name}' added with a portal login.")
+                else:
+                    st.success(f"Department '{name}' added.")
+                st.rerun()
