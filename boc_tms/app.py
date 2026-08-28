@@ -362,3 +362,71 @@ def style_matrix(grid: pd.DataFrame, dept_list: list[str]):
     if hasattr(styler, "map"):
         return styler.map(color_cell)
     return styler.applymap(color_cell)
+
+def page_scheduler():
+    render_header("Monthly Scheduler Matrix &mdash; Driver / Vehicle Assignments")
+ 
+    today = datetime.date.today()
+    c1, c2, c3 = st.columns([1, 1, 2])
+    with c1:
+        year = st.selectbox("Year", list(range(today.year - 1, today.year + 2)),
+                             index=1)
+    with c2:
+        month = st.selectbox("Month", list(range(1, 13)),
+                              index=today.month - 1,
+                              format_func=lambda m: calendar.month_name[m])
+    with c3:
+        view_by = st.radio("View by", ["Driver", "Vehicle"], horizontal=True)
+ 
+    days_in_month = calendar.monthrange(year, month)[1]
+    month_start = datetime.date(year, month, 1).isoformat()
+    month_end = datetime.date(year, month, days_in_month).isoformat()
+    appts = database.get_appointments(date_from=month_start, date_to=month_end)
+    appts = appts[appts["status"] != "Cancelled"]
+ 
+    departments = database.get_departments()
+    dept_list = departments["name"].tolist()
+ 
+    if view_by == "Driver":
+        drivers = database.get_drivers()
+        grid = build_matrix(drivers, "driver_id", "name", appts, days_in_month, year, month)
+    else:
+        vehicles = database.get_vehicles()
+        grid = build_matrix(vehicles, "vehicle_id", "plate_no", appts, days_in_month, year, month)
+ 
+    st.markdown(f"**{calendar.month_name[month]} {year}** &mdash; grid cells show the department "
+                f"each {view_by.lower()} is assigned to on that day. Empty = unassigned/free.")
+ 
+    st.dataframe(style_matrix(grid, dept_list), use_container_width=True, height=430)
+ 
+    with st.expander("Department color legend"):
+        legend_cols = st.columns(4)
+        for i, name in enumerate(dept_list):
+            color = utils.department_color(name, dept_list)
+            swatch = (
+                f'<span style="display:inline-block;width:12px;height:12px;'
+                f'background-color:{color};border-radius:3px;margin-right:6px;"></span> {name}'
+            )
+            legend_cols[i % 4].markdown(swatch, unsafe_allow_html=True)
+ 
+    st.write("")
+    st.subheader(f"Appointment list — {calendar.month_name[month]} {year}")
+    if appts.empty:
+        st.caption("No appointments scheduled this month.")
+    else:
+        display_cols = ["appt_date", "start_time", "end_time", "driver_name",
+                         "plate_no", "department_name", "purpose", "status"]
+        st.dataframe(
+            appts[display_cols].rename(columns={
+                "appt_date": "Date", "start_time": "Start", "end_time": "End",
+                "driver_name": "Driver", "plate_no": "Vehicle",
+                "department_name": "Department", "purpose": "Purpose", "status": "Status",
+            }),
+            use_container_width=True, hide_index=True,
+        )
+ 
+    st.success(
+        "Conflict protection is active: the booking form in the Employee Portal blocks any "
+        "driver or vehicle from being double-booked into overlapping time slots.",
+        icon="🛡️",
+    )
