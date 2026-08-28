@@ -772,4 +772,74 @@ def tab_manage_vehicles():
                     database.update_vehicle_status(int(vehicle_id), new_status)
                     st.success("Vehicle status updated.")
                     st.rerun()
+
+# PENDING REQUESTS TAB
+def tab_pending_requests():
+    st.subheader("Department Transport Requests")
+    st.caption("Requests submitted by branches/divisions via the Department Portal. "
+               "Approving assigns a driver + vehicle and runs the same conflict check as a normal booking.")
  
+    status_filter = st.radio("Show", ["Pending", "Approved", "Rejected", "Cancelled", "All"],
+                              horizontal=True, key="req_status_filter")
+    reqs = database.get_trip_requests(status=None if status_filter == "All" else status_filter)
+ 
+    if reqs.empty:
+        st.caption("No requests in this category.")
+        return
+ 
+    display_cols = ["id", "department_name", "appt_date", "start_time", "end_time",
+                     "purpose", "status", "requested_by", "driver_name", "plate_no"]
+    st.dataframe(
+        reqs[display_cols].rename(columns={
+            "id": "ID", "department_name": "Department", "appt_date": "Date",
+            "start_time": "Start", "end_time": "End", "purpose": "Purpose",
+            "status": "Status", "requested_by": "Requested By",
+            "driver_name": "Assigned Driver", "plate_no": "Assigned Vehicle",
+        }),
+        use_container_width=True, hide_index=True,
+    )
+ 
+    pending = database.get_trip_requests(status="Pending")
+    if pending.empty:
+        return
+ 
+    st.markdown("**Review a pending request**")
+    drivers = database.get_drivers()
+    vehicles = database.get_vehicles()
+ 
+    req_options = {
+        f"#{r['id']} — {r['department_name']} — {r['appt_date']} {r['start_time']}-{r['end_time']}": r["id"]
+        for _, r in pending.iterrows()
+    }
+    driver_labels = {f"{r['name']} ({r['status']})": r["id"] for _, r in drivers.iterrows()}
+    vehicle_labels = {f"{r['plate_no']} - {r['vehicle_type']} ({r['status']})": r["id"]
+                       for _, r in vehicles.iterrows()}
+ 
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        req_choice = st.selectbox("Request", list(req_options.keys()))
+    with c2:
+        driver_choice = st.selectbox("Assign driver", list(driver_labels.keys()))
+    with c3:
+        vehicle_choice = st.selectbox("Assign vehicle", list(vehicle_labels.keys()))
+ 
+    a1, a2 = st.columns(2)
+    with a1:
+        if st.button("✅ Approve & Assign", type="primary", use_container_width=True):
+            ok, conflicts = database.approve_trip_request(
+                req_options[req_choice], driver_labels[driver_choice], vehicle_labels[vehicle_choice]
+            )
+            if ok:
+                st.success("Request approved and appointment created.")
+                st.rerun()
+            else:
+                st.error("Could not approve — conflict(s) detected:")
+                for c in conflicts:
+                    st.write(f"- {c}")
+    with a2:
+        with st.popover("❌ Reject request", use_container_width=True):
+            note = st.text_area("Reason (optional)", key="reject_note")
+            if st.button("Confirm rejection", key="confirm_reject"):
+                database.reject_trip_request(req_options[req_choice], note)
+                st.success("Request rejected.")
+                st.rerun()
