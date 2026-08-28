@@ -930,3 +930,39 @@ def tab_leave_requests():
                 database.reject_leave_request(options[choice], note)
                 st.success("Leave rejected.")
                 st.rerun()
+
+def page_employee_portal():
+    render_header("Transport Officer Portal &mdash; Secure Access")
+ 
+    if not auth.require_role_or_login(
+        auth.ROLE_OFFICER, "admin", "BOC@Transport2026",
+        "Full control: approve department requests, manage bookings, drivers and vehicles."
+    ):
+        return
+ 
+    user = auth.current_user()
+    st.sidebar.markdown(f"**Signed in as:** {user['full_name']}")
+    auth.logout_button()
+ 
+    pending_count = len(database.get_trip_requests(status="Pending"))
+    requests_label = f"📥 Pending Requests ({pending_count})" if pending_count else "📥 Pending Requests"
+    leave_pending_count = len(database.get_leave_requests(status="Pending"))
+    leave_label = f"🌴 Leave Requests ({leave_pending_count})" if leave_pending_count else "🌴 Leave Requests"
+ 
+    tabs = st.tabs([requests_label, leave_label, "➕ Add Appointment", "📋 Manage Appointments",
+                     "🧑‍✈️ Manage Drivers", "🚐 Manage Vehicles", "🏢 Manage Departments"])
+    with tabs[0]:
+        tab_pending_requests()
+    with tabs[1]:
+        tab_leave_requests()
+    with tabs[2]:
+        tab_add_appointment()
+    with tabs[3]:
+        tab_manage_appointments()
+    with tabs[4]:
+        tab_manage_drivers()
+    with tabs[5]:
+        tab_manage_vehicles()
+    with tabs[6]:
+        tab_manage_departments()
+ 
