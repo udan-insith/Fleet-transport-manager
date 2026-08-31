@@ -599,3 +599,85 @@ def vehicles_needing_attention(warn_days: int = 30) -> pd.DataFrame:
     return pd.DataFrame(rows) if rows else vehicles.iloc[0:0].assign(issues=[])
 
 # DRIVER LEAVE REQUESTS
+def add_leave_request(driver_id: int, start_date: str, end_date: str, reason: str,
+                       actor: str | None = None):
+    with get_cursor(commit=True) as cur:
+        cur.execute(
+            """INSERT INTO leave_requests (driver_id, start_date, end_date, reason, status, requested_at)
+               VALUES (?, ?, ?, ?, 'Pending', ?)""",
+            (driver_id, start_date, end_date, reason,
+             datetime.datetime.now().isoformat(timespec="seconds")),
+        )
+    log_action(actor, "leave_requested", f"driver #{driver_id}: {start_date} to {end_date}")
+    _touch_backup()
+ 
+ 
+def get_leave_requests(status: str | None = None, driver_id: int | None = None) -> pd.DataFrame:
+    conn = get_connection()
+    q = """
+    SELECT l.*, d.name AS driver_name
+    FROM leave_requests l
+    JOIN drivers d ON d.id = l.driver_id
+    """
+    clauses, params = [], []
+    if status:
+        clauses.append("l.status = ?")
+        params.append(status)
+    if driver_id is not None:
+        clauses.append("l.driver_id = ?")
+        params.append(driver_id)
+    if clauses:
+        q += " WHERE " + " AND ".join(clauses)
+    q += " ORDER BY l.requested_at DESC"
+    df = pd.read_sql_query(q, conn, params=params)
+    conn.close()
+    return df
+ 
+ 
+def approve_leave_request(request_id: int, actor: str | None = None):
+    with get_cursor() as cur:
+        cur.execute("SELECT * FROM leave_requests WHERE id = ?", (request_id,))
+        req = cur.fetchone()
+    if req is None or req["status"] != "Pending":
+        return
+ 
+    today = datetime.date.today().isoformat()
+    with get_cursor(commit=True) as cur:
+        cur.execute(
+            """UPDATE leave_requests SET status = 'Approved', decided_at = ? WHERE id = ?""",
+            (datetime.datetime.now().isoformat(timespec="seconds"), request_id),
+        )
+        # If leave covers today, reflect it on the driver's status immediately.
+        if req["start_date"] <= today <= req["end_date"]:
+            cur.execute("UPDATE drivers SET status = 'On Leave' WHERE id = ?", (req["driver_id"],))
+    log_action(actor, "leave_approved", f"leave request #{request_id} (driver #{req['driver_id']})")
+    _touch_backup()
+ 
+ 
+def reject_leave_request(request_id: int, note: str = "", actor: str | None = None):
+    with get_cursor(commit=True) as cur:
+        cur.execute(
+            """UPDATE leave_requests SET status = 'Rejected', decision_note = ?, decided_at = ?
+               WHERE id = ?""",
+            (note, datetime.datetime.now().isoformat(timespec="seconds"), request_id),
+        )
+    log_action(actor, "leave_rejected", f"leave request #{request_id}: {note}")
+    _touch_backup()
+ 
+ 
+def nudge_driver_locations():
+    """
+    Mock GPS simulation: nudges the coordinates of drivers currently
+    'On Trip' by a small random offset, so the Live Map page feels like
+    it is tracking moving vehicles when the user clicks 'Simulate GPS Ping'.
+    """
+    with get_cursor(commit=True) as cur:
+        cur.execute("SELECT id, lat, lon FROM drivers WHERE status = 'On Trip'")
+        rows = cur.fetchall()
+        for row in rows:
+            new_lat = (row["lat"] or 6.9271) + random.uniform(-0.004, 0.004)
+            new_lon = (row["lon"] or 79.8612) + random.uniform(-0.004, 0.004)
+            cur.execute("UPDATE drivers SET lat = ?, lon = ? WHERE id = ?",
+                        (new_lat, new_lon, row["id"]))
+    _touch_backup()
+ 
