@@ -18,6 +18,7 @@ def current_role() -> str | None:
     user = current_user()
     return user["role"] if user else None
 
+
 def login_form(expected_role: str, demo_username: str, demo_password: str, hint: str = ""):
     """
     Renders a login form scoped to `expected_role`. Login only succeeds if
