@@ -190,8 +190,8 @@ def verify_login(username: str, password: str):
 def _table_count(cur, table):
     cur.execute(f"SELECT COUNT(*) AS c FROM {table}")
     return cur.fetchone()["c"]
-
-
+ 
+ 
 def seed_if_empty():
     with get_cursor(commit=True) as cur:
         if _table_count(cur, "departments") == 0:
@@ -209,7 +209,7 @@ def seed_if_empty():
                 "INSERT INTO departments (name, location, lat, lon) VALUES (?, ?, ?, ?)",
                 departments,
             )
-
+ 
         if _table_count(cur, "drivers") == 0:
             first_names = ["Sunil", "Nimal", "Kasun", "Priyantha", "Chamara", "Ruwan",
                             "Ajith", "Lasantha", "Suresh", "Dinesh", "Mahinda", "Roshan"]
@@ -232,7 +232,7 @@ def seed_if_empty():
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 drivers,
             )
-
+ 
         if _table_count(cur, "vehicles") == 0:
             types = [("Van", 12), ("Car", 4), ("Double Cab", 4), ("Bus", 30), ("Lorry", 2)]
             statuses = ["Available", "Available", "In Use", "Available", "Maintenance"]
@@ -257,7 +257,7 @@ def seed_if_empty():
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 vehicles,
             )
-
+ 
         if _table_count(cur, "users") == 0:
             # Transport Officer (full control over fleet + bookings)
             cur.execute(
@@ -265,7 +265,7 @@ def seed_if_empty():
                    VALUES (?, ?, ?, ?)""",
                 ("admin", hash_password("BOC@Transport2026"), "Transport Duty Officer", "Transport Officer"),
             )
-
+ 
             # Driver login — linked to the first seeded driver, so this account
             # only ever sees/manages that driver's own schedule and status.
             cur.execute("SELECT id, name FROM drivers ORDER BY id LIMIT 1")
@@ -276,7 +276,7 @@ def seed_if_empty():
                        VALUES (?, ?, ?, 'Driver', ?)""",
                     ("driver1", hash_password("Driver@123"), first_driver["name"], first_driver["id"]),
                 )
-
+ 
             # Department login — linked to a requesting department/branch, so
             # this account can only submit/view requests for that department.
             cur.execute("SELECT id, name FROM departments WHERE name LIKE 'Kandy%' LIMIT 1")
@@ -287,7 +287,7 @@ def seed_if_empty():
                        VALUES (?, ?, ?, 'Department', ?)""",
                     ("kandy_branch", hash_password("Dept@123"), req_dept["name"], req_dept["id"]),
                 )
-
+ 
         if _table_count(cur, "appointments") == 0:
             cur.execute("SELECT id FROM drivers")
             driver_ids = [r["id"] for r in cur.fetchall()]
@@ -295,11 +295,19 @@ def seed_if_empty():
             vehicle_ids = [r["id"] for r in cur.fetchall()]
             cur.execute("SELECT id FROM departments")
             dept_ids = [r["id"] for r in cur.fetchall()]
-
+ 
             random.seed(99)
             today = datetime.date.today()
             purposes = ["Cash in transit", "Staff transport", "Document courier",
                         "Branch inspection visit", "VIP transport", "Equipment delivery"]
+ 
+            # Same open transaction/cursor, so this sees the vehicles/departments
+            # just inserted above even though nothing has committed yet.
+            cur.execute("SELECT id, vehicle_type FROM vehicles")
+            vehicle_type_by_id = {r["id"]: r["vehicle_type"] for r in cur.fetchall()}
+            cur.execute("SELECT id, lat, lon FROM departments")
+            dept_coords_by_id = {r["id"]: (r["lat"], r["lon"]) for r in cur.fetchall()}
+ 
             appts = []
             used_pairs = set()
             for i in range(18):
@@ -315,14 +323,19 @@ def seed_if_empty():
                     continue
                 used_pairs.add(key)
                 dep_id = random.choice(dept_ids)
+                dep_lat, dep_lon = dept_coords_by_id.get(dep_id, (None, None))
+                estimated_cost = None
+                if dep_lat is not None:
+                    dist_km = utils.haversine_km(DEPOT_LAT, DEPOT_LON, dep_lat, dep_lon)
+                    estimated_cost = utils.estimate_trip_cost(vehicle_type_by_id.get(v_id), dist_km)
                 appts.append((appt_date, start_time, end_time, d_id, v_id, dep_id,
                               random.choice(purposes), "Scheduled", "admin",
-                              datetime.datetime.now().isoformat(timespec="seconds")))
+                              datetime.datetime.now().isoformat(timespec="seconds"), estimated_cost))
             cur.executemany(
                 """INSERT INTO appointments
                    (appt_date, start_time, end_time, driver_id, vehicle_id, department_id,
-                    purpose, status, created_by, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    purpose, status, created_by, created_at, estimated_cost)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 appts,
             )
 
