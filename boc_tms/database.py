@@ -16,8 +16,8 @@ def get_connection():
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.row_factory = sqlite3.Row
     return conn
-
-
+ 
+ 
 @contextmanager
 def get_cursor(commit: bool = False):
     conn = get_connection()
