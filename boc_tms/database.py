@@ -402,12 +402,12 @@ def get_appointments(date_from: str | None = None, date_to: str | None = None) -
 def _to_minutes(hhmm: str) -> int:
     h, m = hhmm.split(":")
     return int(h) * 60 + int(m)
-
-
+ 
+ 
 def _overlaps(s1, e1, s2, e2) -> bool:
     return _to_minutes(s1) < _to_minutes(e2) and _to_minutes(s2) < _to_minutes(e1)
-
-
+ 
+ 
 def check_conflict(appt_date, start_time, end_time, driver_id, vehicle_id, exclude_id=None):
     """
     Returns a list of human-readable conflict messages (empty list = no conflict).
@@ -425,7 +425,7 @@ def check_conflict(appt_date, start_time, end_time, driver_id, vehicle_id, exclu
             (appt_date,),
         )
         rows = cur.fetchall()
-
+ 
     for row in rows:
         if exclude_id is not None and row["id"] == exclude_id:
             continue
