@@ -153,14 +153,17 @@ def _migrate_schema():
     """
     with get_cursor(commit=True) as cur:
         cur.execute("PRAGMA table_info(vehicles)")
-        existing_cols = {row["name"] for row in cur.fetchall()}
+        existing_vehicle_cols = {row["name"] for row in cur.fetchall()}
         for col in ("insurance_expiry", "revenue_license_expiry", "next_service_due"):
-            if col not in existing_cols:
+            if col not in existing_vehicle_cols:
                 cur.execute(f"ALTER TABLE vehicles ADD COLUMN {col} TEXT")
-
-
-
-
+ 
+        cur.execute("PRAGMA table_info(appointments)")
+        existing_appt_cols = {row["name"] for row in cur.fetchall()}
+        if "estimated_cost" not in existing_appt_cols:
+            cur.execute("ALTER TABLE appointments ADD COLUMN estimated_cost REAL")
+ 
+ 
 def init_db():
     with get_cursor(commit=True) as cur:
         cur.executescript(SCHEMA)
