@@ -444,56 +444,86 @@ def check_conflict(appt_date, start_time, end_time, driver_id, vehicle_id, exclu
     return conflicts
 
 #WRITE HELPERS
+DEPOT_LAT, DEPOT_LON = 6.9271, 79.8612  # Head Office depot, used as the cost-estimation origin
+ 
+ 
+def _compute_trip_cost(vehicle_id: int, department_id: int) -> float | None:
+    """Best-effort estimated cost; returns None if vehicle/department lookup fails."""
+    try:
+        with get_cursor() as cur:
+            cur.execute("SELECT vehicle_type FROM vehicles WHERE id = ?", (vehicle_id,))
+            v = cur.fetchone()
+            cur.execute("SELECT lat, lon FROM departments WHERE id = ?", (department_id,))
+            dep = cur.fetchone()
+        if not v or not dep or dep["lat"] is None or dep["lon"] is None:
+            return None
+        distance_km = utils.haversine_km(DEPOT_LAT, DEPOT_LON, dep["lat"], dep["lon"])
+        return utils.estimate_trip_cost(v["vehicle_type"], distance_km)
+    except Exception:
+        return None
+ 
+ 
 def add_appointment(appt_date, start_time, end_time, driver_id, vehicle_id,
                      department_id, purpose, created_by):
     conflicts = check_conflict(appt_date, start_time, end_time, driver_id, vehicle_id)
     if conflicts:
         return False, conflicts
-
+ 
+    estimated_cost = _compute_trip_cost(vehicle_id, department_id)
+ 
     with get_cursor(commit=True) as cur:
         cur.execute(
             """INSERT INTO appointments
                (appt_date, start_time, end_time, driver_id, vehicle_id, department_id,
-                purpose, status, created_by, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?)""",
+                purpose, status, created_by, created_at, estimated_cost)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?, ?)""",
             (appt_date, start_time, end_time, driver_id, vehicle_id, department_id,
-             purpose, created_by, datetime.datetime.now().isoformat(timespec="seconds")),
+             purpose, created_by, datetime.datetime.now().isoformat(timespec="seconds"),
+             estimated_cost),
         )
-
+ 
+    log_action(created_by, "appointment_created",
+               f"{appt_date} {start_time}-{end_time}, driver #{driver_id}, vehicle #{vehicle_id}")
     _touch_backup()
     return True, []
-
-
-def update_appointment_status(appt_id: int, status: str):
+ 
+ 
+def update_appointment_status(appt_id: int, status: str, actor: str | None = None):
     with get_cursor(commit=True) as cur:
         cur.execute("UPDATE appointments SET status = ? WHERE id = ?", (status, appt_id))
+    log_action(actor, "appointment_status_updated", f"appointment #{appt_id} -> {status}")
     _touch_backup()
-
-
-def update_driver_status(driver_id: int, status: str):
+ 
+ 
+def update_driver_status(driver_id: int, status: str, actor: str | None = None):
     with get_cursor(commit=True) as cur:
         cur.execute("UPDATE drivers SET status = ? WHERE id = ?", (status, driver_id))
+    log_action(actor, "driver_status_updated", f"driver #{driver_id} -> {status}")
     _touch_backup()
-
-
-def update_vehicle_status(vehicle_id: int, status: str):
+ 
+ 
+def update_vehicle_status(vehicle_id: int, status: str, actor: str | None = None):
     with get_cursor(commit=True) as cur:
         cur.execute("UPDATE vehicles SET status = ? WHERE id = ?", (status, vehicle_id))
+    log_action(actor, "vehicle_status_updated", f"vehicle #{vehicle_id} -> {status}")
     _touch_backup()
-
-
-def add_driver(name, license_no, phone, base_location, status="Available", lat=None, lon=None):
+ 
+ 
+def add_driver(name, license_no, phone, base_location, status="Available", lat=None, lon=None,
+               actor: str | None = None):
     with get_cursor(commit=True) as cur:
         cur.execute(
             """INSERT INTO drivers (name, license_no, phone, base_location, status, lat, lon)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (name, license_no, phone, base_location, status, lat, lon),
         )
+    log_action(actor, "driver_added", f"{name} ({license_no})")
     _touch_backup()
-
-
+ 
+ 
 def add_vehicle(plate_no, vehicle_type, capacity, status="Available", lat=None, lon=None,
-                 insurance_expiry=None, revenue_license_expiry=None, next_service_due=None):
+                 insurance_expiry=None, revenue_license_expiry=None, next_service_due=None,
+                 actor: str | None = None):
     with get_cursor(commit=True) as cur:
         cur.execute(
             """INSERT INTO vehicles (plate_no, vehicle_type, capacity, status, lat, lon,
@@ -502,11 +532,12 @@ def add_vehicle(plate_no, vehicle_type, capacity, status="Available", lat=None, 
             (plate_no, vehicle_type, capacity, status, lat, lon,
              insurance_expiry, revenue_license_expiry, next_service_due),
         )
+    log_action(actor, "vehicle_added", f"{plate_no} ({vehicle_type})")
     _touch_backup()
-
-
+ 
+ 
 def update_vehicle_compliance(vehicle_id: int, insurance_expiry=None, revenue_license_expiry=None,
-                               next_service_due=None):
+                               next_service_due=None, actor: str | None = None):
     with get_cursor(commit=True) as cur:
         cur.execute(
             """UPDATE vehicles
@@ -514,9 +545,12 @@ def update_vehicle_compliance(vehicle_id: int, insurance_expiry=None, revenue_li
                WHERE id = ?""",
             (insurance_expiry, revenue_license_expiry, next_service_due, vehicle_id),
         )
+    log_action(actor, "vehicle_compliance_updated",
+               f"vehicle #{vehicle_id}: insurance={insurance_expiry}, "
+               f"revenue_license={revenue_license_expiry}, service={next_service_due}")
     _touch_backup()
-
-
+ 
+ 
 def vehicles_needing_attention(warn_days: int = 30) -> pd.DataFrame:
     """
     Returns vehicles whose insurance, revenue license, or next service is
@@ -527,10 +561,10 @@ def vehicles_needing_attention(warn_days: int = 30) -> pd.DataFrame:
     vehicles = get_vehicles()
     if vehicles.empty:
         return vehicles.assign(issues=[])
-
+ 
     today = datetime.date.today()
     horizon = today + datetime.timedelta(days=warn_days)
-
+ 
     def _status(date_str, label):
         # iterrows() can upcast a per-row None to float('nan') when the
         # same column holds real date strings on other rows -- and
@@ -547,7 +581,7 @@ def vehicles_needing_attention(warn_days: int = 30) -> pd.DataFrame:
         if d <= horizon:
             return f"{label} due {date_str}"
         return None
-
+ 
     rows = []
     for _, v in vehicles.iterrows():
         issues = [
@@ -561,7 +595,7 @@ def vehicles_needing_attention(warn_days: int = 30) -> pd.DataFrame:
             row = v.to_dict()
             row["issues"] = "; ".join(issues)
             rows.append(row)
-
+ 
     return pd.DataFrame(rows) if rows else vehicles.iloc[0:0].assign(issues=[])
 
 # DRIVER LEAVE REQUESTS
