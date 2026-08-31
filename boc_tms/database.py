@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS users (
     linked_driver_id INTEGER REFERENCES drivers(id),
     linked_department_id INTEGER REFERENCES departments(id)
 );
-
+ 
 CREATE TABLE IF NOT EXISTS drivers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS drivers (
     lat REAL,
     lon REAL
 );
-
+ 
 CREATE TABLE IF NOT EXISTS vehicles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     plate_no TEXT UNIQUE NOT NULL,
@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS vehicles (
     revenue_license_expiry TEXT,    -- YYYY-MM-DD
     next_service_due TEXT           -- YYYY-MM-DD
 );
-
+ 
 CREATE TABLE IF NOT EXISTS departments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS departments (
     lat REAL,
     lon REAL
 );
-
+ 
 CREATE TABLE IF NOT EXISTS appointments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     appt_date TEXT NOT NULL,        -- YYYY-MM-DD
@@ -96,9 +96,10 @@ CREATE TABLE IF NOT EXISTS appointments (
     purpose TEXT,
     status TEXT NOT NULL DEFAULT 'Scheduled',   -- Scheduled / Completed / Cancelled
     created_by TEXT,
-    created_at TEXT
+    created_at TEXT,
+    estimated_cost REAL             -- LKR, auto-computed from distance + vehicle rate
 );
-
+ 
 CREATE TABLE IF NOT EXISTS trip_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     department_id INTEGER NOT NULL REFERENCES departments(id),
@@ -113,7 +114,7 @@ CREATE TABLE IF NOT EXISTS trip_requests (
     decision_note TEXT,
     decided_at TEXT
 );
-
+ 
 CREATE TABLE IF NOT EXISTS leave_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     driver_id INTEGER NOT NULL REFERENCES drivers(id),
@@ -124,6 +125,23 @@ CREATE TABLE IF NOT EXISTS leave_requests (
     requested_at TEXT,
     decided_at TEXT,
     decision_note TEXT
+);
+ 
+CREATE TABLE IF NOT EXISTS trip_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    appointment_id INTEGER NOT NULL UNIQUE REFERENCES appointments(id),
+    rating INTEGER NOT NULL,        -- 1-5
+    comment TEXT,
+    submitted_by TEXT,
+    submitted_at TEXT
+);
+ 
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    details TEXT
 );
 """
 
