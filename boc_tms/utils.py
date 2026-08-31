@@ -1,11 +1,21 @@
 import math
 
-#BOC BRAND PALETTE
+# --------------------------------------------------------------------------
+# BOC brand palette
+# --------------------------------------------------------------------------
 BOC_NAVY = "#003366"
 BOC_NAVY_LIGHT = "#0A4D8C"
 BOC_GOLD = "#FFCC00"
 BOC_BG = "#F4F6F9"
 BOC_WHITE = "#FFFFFF"
+
+# Dark-mode counterparts, used by app.inject_theme() when
+# st.context.theme.type == "dark". Keep these in sync with the
+# [theme.dark] table in .streamlit/config.toml.
+BOC_DARK_BG = "#0B1E33"
+BOC_DARK_CARD = "#13294B"
+BOC_DARK_SIDEBAR = "#001830"
+BOC_DARK_TEXT = "#F4F6F9"
 
 DRIVER_STATUS_COLORS = {
     "Available": "#2ECC71",
@@ -25,6 +35,7 @@ DEPARTMENT_PALETTE = [
     "#16A085", "#C0392B", "#2980B9", "#7F8C8D", "#D35400",
 ]
 
+
 def department_color(department_name: str, department_list: list[str]) -> str:
     """Deterministic color per department, for the scheduler matrix."""
     if department_name not in department_list:
@@ -32,7 +43,11 @@ def department_color(department_name: str, department_list: list[str]) -> str:
     idx = department_list.index(department_name) % len(DEPARTMENT_PALETTE)
     return DEPARTMENT_PALETTE[idx]
 
-#GEO HELPERS
+
+# --------------------------------------------------------------------------
+# Geo helpers
+# --------------------------------------------------------------------------
+
 def haversine_km(lat1, lon1, lat2, lon2) -> float:
     """Great-circle distance between two points, in kilometres."""
     if None in (lat1, lon1, lat2, lon2):
@@ -44,7 +59,11 @@ def haversine_km(lat1, lon1, lat2, lon2) -> float:
     a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlambda / 2) ** 2
     return 2 * R * math.asin(math.sqrt(a))
 
-#TIME HELPERS
+
+# --------------------------------------------------------------------------
+# Time helpers
+# --------------------------------------------------------------------------
+
 TIME_OPTIONS = [f"{h:02d}:{m:02d}" for h in range(6, 21) for m in (0, 30)]
 
 
