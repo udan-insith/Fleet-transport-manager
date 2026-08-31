@@ -839,3 +839,34 @@ def cancel_trip_request(request_id: int, actor: str | None = None):
         )
     log_action(actor, "trip_request_cancelled", f"request #{request_id}")
     _touch_backup()
+
+#DEPARTMENT MANAGEMENT + LOGIN AUTHENTICATION
+def add_department(name, location, lat=None, lon=None, actor: str | None = None):
+    with get_cursor(commit=True) as cur:
+        cur.execute(
+            "INSERT INTO departments (name, location, lat, lon) VALUES (?, ?, ?, ?)",
+            (name, location, lat, lon),
+        )
+        dept_id = cur.lastrowid
+    log_action(actor, "department_added", name)
+    _touch_backup()
+    return dept_id
+ 
+ 
+def create_login(username, password, full_name, role, linked_driver_id=None, linked_department_id=None,
+                  actor: str | None = None):
+    """Create a portal login of a given role, optionally linked to a driver or department."""
+    with get_cursor(commit=True) as cur:
+        cur.execute(
+            """INSERT INTO users (username, password_hash, full_name, role, linked_driver_id, linked_department_id)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (username, hash_password(password), full_name, role, linked_driver_id, linked_department_id),
+        )
+    log_action(actor, "login_created", f"{username} ({role})")
+    _touch_backup()
+ 
+ 
+def username_exists(username: str) -> bool:
+    with get_cursor() as cur:
+        cur.execute("SELECT 1 FROM users WHERE username = ?", (username,))
+        return cur.fetchone() is not None
