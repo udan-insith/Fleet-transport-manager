@@ -1,4 +1,4 @@
-streamlit>=1.38,<2.0
+streamlit>=1.46,<2.0
 pandas>=2.1
 openpyxl>=3.1
 folium>=0.16
