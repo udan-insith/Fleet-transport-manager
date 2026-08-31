@@ -18,13 +18,16 @@ def _export_now():
         departments = database.get_departments()
         appointments = database.get_appointments()
         trip_requests = database.get_trip_requests()
+        leave_requests = database.get_leave_requests()
+        attention = database.vehicles_needing_attention()
 
         summary = pd.DataFrame({
             "Metric": [
                 "Total Drivers", "Available Drivers",
                 "Total Vehicles", "Available Vehicles",
                 "Total Departments", "Total Appointments (all time)",
-                "Pending Trip Requests",
+                "Pending Trip Requests", "Pending Leave Requests",
+                "Vehicles Needing Attention",
                 "Last Backup",
             ],
             "Value": [
@@ -35,6 +38,8 @@ def _export_now():
                 len(departments),
                 len(appointments),
                 int((trip_requests["status"] == "Pending").sum()) if len(trip_requests) else 0,
+                int((leave_requests["status"] == "Pending").sum()) if len(leave_requests) else 0,
+                len(attention),
                 datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             ],
         })
@@ -51,6 +56,7 @@ def _export_now():
                 departments.to_excel(writer, sheet_name="Departments", index=False)
                 appointments.to_excel(writer, sheet_name="Appointments", index=False)
                 trip_requests.to_excel(writer, sheet_name="Trip Requests", index=False)
+                leave_requests.to_excel(writer, sheet_name="Leave Requests", index=False)
             os.replace(tmp_path, BACKUP_PATH)  # atomic on POSIX & Windows (NTFS)
         finally:
             if os.path.exists(tmp_path):
