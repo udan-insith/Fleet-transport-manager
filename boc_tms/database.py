@@ -172,14 +172,16 @@ def init_db():
 #AUTH HELPERS
 def hash_password(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
+ 
+ 
 def verify_login(username: str, password: str):
     with get_cursor() as cur:
         cur.execute("SELECT * FROM users WHERE username = ?", (username,))
         row = cur.fetchone()
     if row and row["password_hash"] == hash_password(password):
+        log_action(username, "login_success", row["role"])
         return dict(row)
+    log_action(username, "login_failed", "")
     return None
 
 #SEEDING DATA FOR THE FIRST RUN ONLY
