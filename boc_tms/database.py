@@ -870,3 +870,62 @@ def username_exists(username: str) -> bool:
     with get_cursor() as cur:
         cur.execute("SELECT 1 FROM users WHERE username = ?", (username,))
         return cur.fetchone() is not None
+
+#AUDIT LOG
+def log_action(actor: str | None, action: str, details: str = ""):
+    """
+    Records one audit trail entry. `actor` is normally the acting user's
+    username; falls back to 'system' for background/unattributed actions
+    (e.g. the mock GPS ping). Never raises -- a logging failure must not
+    break the calling operation.
+    """
+    try:
+        with get_cursor(commit=True) as cur:
+            cur.execute(
+                "INSERT INTO audit_log (timestamp, actor, action, details) VALUES (?, ?, ?, ?)",
+                (datetime.datetime.now().isoformat(timespec="seconds"), actor or "system", action, details),
+            )
+    except Exception:
+        pass
+ 
+ 
+def get_audit_log(limit: int = 300, actor_filter: str | None = None,
+                   action_filter: str | None = None) -> pd.DataFrame:
+    conn = get_connection()
+    q = "SELECT * FROM audit_log"
+    clauses, params = [], []
+    if actor_filter:
+        clauses.append("actor LIKE ?")
+        params.append(f"%{actor_filter}%")
+    if action_filter:
+        clauses.append("action LIKE ?")
+        params.append(f"%{action_filter}%")
+    if clauses:
+        q += " WHERE " + " AND ".join(clauses)
+    q += " ORDER BY id DESC LIMIT ?"
+    params.append(limit)
+    df = pd.read_sql_query(q, conn, params=params)
+    conn.close()
+    return df
+ 
+ 
+def _touch_backup():
+    """Fire-and-forget Excel backup, imported lazily to avoid circular imports."""
+    try:
+        import excel_sync
+        excel_sync.trigger_backup()
+    except Exception:
+        # Backup failures must never break the live app.
+        pass
+ 
+ 
+if __name__ == "__main__":
+    # Standalone smoke test: `python3 database.py`
+    init_db()
+    seed_if_empty()
+    print("Drivers:", len(get_drivers()))
+    print("Vehicles:", len(get_vehicles()))
+    print("Departments:", len(get_departments()))
+    print("Appointments:", len(get_appointments()))
+    print("Login check (admin/BOC@Transport2026):", bool(verify_login("admin", "BOC@Transport2026")))
+ 
