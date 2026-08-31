@@ -11,9 +11,21 @@ DB_PATH = "boc_transport.db"
 
 #CONNECTION HELPERS
 def get_connection():
-    """Return a SQLite connection safe for use across Streamlit's reruns."""
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    """
+    Return a SQLite connection safe for use across Streamlit's reruns AND
+    the background Excel-backup thread hitting the same file concurrently.
+ 
+    - timeout=30: Python's sqlite3 waits up to 30s for a lock instead of
+      immediately raising "database is locked" (default is 5s, too short
+      under bursty write + concurrent backup-read load).
+    - WAL journal mode: lets the backup thread's reads not block the main
+      thread's writes (and vice versa) in the common case, instead of the
+      default rollback-journal mode's stricter single-writer-blocks-all.
+    """
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
     conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     conn.row_factory = sqlite3.Row
     return conn
  
