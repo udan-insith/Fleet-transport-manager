@@ -1,5 +1,6 @@
 """Standalone unit tests for database.py business logic (not shipped to user)."""
 import os
+import datetime
 import pandas as pd
 import database
 import excel_sync
@@ -49,6 +50,7 @@ first_id = int(appts.iloc[0]["id"])
 database.update_appointment_status(first_id, "Cancelled")
 ok, conflicts = database.add_appointment("2026-09-01", "09:00", "11:00", d1, v1, dep, "Test F", "tester")
 results.append(("Cancelled appointment frees the slot", ok and not conflicts))
+
 # 7) Driver/vehicle status updates persist
 database.update_driver_status(d1, "On Leave")
 d1_status = database.get_drivers()
@@ -68,7 +70,7 @@ import openpyxl
 wb = openpyxl.load_workbook(excel_sync.BACKUP_PATH)
 results.append(("Excel backup has all sheets",
                  set(wb.sheetnames) == {"Summary", "Drivers", "Vehicles", "Departments",
-                                        "Appointments", "Trip Requests"}))
+                                        "Appointments", "Trip Requests", "Leave Requests"}))
 results.append(("Excel backup Drivers sheet row count matches DB",
                  wb["Drivers"].max_row - 1 == len(database.get_drivers())))
 
@@ -99,6 +101,73 @@ cancel_id = int(pend2.iloc[0]["id"])
 database.cancel_trip_request(cancel_id)
 cancelled = database.get_trip_requests(status="Cancelled", department_id=new_dept_id)
 results.append(("Cancelling a pending request works", len(cancelled) == 1))
+
+# 12) Vehicle compliance tracking
+test_vehicle = database.get_vehicles().iloc[0]
+overdue_date = (datetime.date.today() - datetime.timedelta(days=5)).isoformat()
+healthy_date = (datetime.date.today() + datetime.timedelta(days=365)).isoformat()
+database.update_vehicle_compliance(int(test_vehicle["id"]), insurance_expiry=overdue_date,
+                                    revenue_license_expiry=healthy_date, next_service_due=healthy_date)
+attention = database.vehicles_needing_attention(warn_days=30)
+flagged = attention[attention["id"] == test_vehicle["id"]]
+results.append(("Overdue insurance flags the vehicle in vehicles_needing_attention",
+                 not flagged.empty and "OVERDUE" in flagged.iloc[0]["issues"]))
+
+database.update_vehicle_compliance(int(test_vehicle["id"]), insurance_expiry=healthy_date,
+                                    revenue_license_expiry=healthy_date, next_service_due=healthy_date)
+attention2 = database.vehicles_needing_attention(warn_days=30)
+results.append(("Updating compliance dates clears the alert",
+                 test_vehicle["id"] not in attention2["id"].values if not attention2.empty else True))
+
+# 13) Driver leave request workflow
+test_driver_id = int(database.get_drivers().iloc[0]["id"])
+today_iso = datetime.date.today().isoformat()
+end_iso = (datetime.date.today() + datetime.timedelta(days=2)).isoformat()
+database.add_leave_request(test_driver_id, today_iso, end_iso, "Test leave")
+leave_pending = database.get_leave_requests(status="Pending", driver_id=test_driver_id)
+results.append(("Leave request created as Pending", len(leave_pending) == 1))
+
+leave_id = int(leave_pending.iloc[0]["id"])
+database.approve_leave_request(leave_id)
+leave_approved = database.get_leave_requests(status="Approved", driver_id=test_driver_id)
+results.append(("Approving a leave request marks it Approved", len(leave_approved) == 1))
+driver_status_after = database.get_drivers()
+driver_status_after = driver_status_after[driver_status_after["id"] == test_driver_id].iloc[0]["status"]
+results.append(("Approved leave covering today sets driver status to On Leave",
+                 driver_status_after == "On Leave"))
+
+database.add_leave_request(test_driver_id, "2026-12-01", "2026-12-03", "Test reject leave")
+leave_pending2 = database.get_leave_requests(status="Pending", driver_id=test_driver_id)
+leave_id2 = int(leave_pending2.iloc[0]["id"])
+database.reject_leave_request(leave_id2, "Coverage unavailable")
+leave_rejected = database.get_leave_requests(status="Rejected", driver_id=test_driver_id)
+results.append(("Rejecting a leave request stores the reason",
+                 len(leave_rejected) == 1 and leave_rejected.iloc[0]["decision_note"] == "Coverage unavailable"))
+
+# 14) Schema migration: an old-style vehicles table (no compliance columns) upgrades cleanly
+import sqlite3
+migrate_test_db = "test_migration.db"
+if os.path.exists(migrate_test_db):
+    os.remove(migrate_test_db)
+old_conn = sqlite3.connect(migrate_test_db)
+old_conn.execute("""CREATE TABLE vehicles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, plate_no TEXT UNIQUE NOT NULL,
+    vehicle_type TEXT NOT NULL, capacity INTEGER,
+    status TEXT NOT NULL DEFAULT 'Available', lat REAL, lon REAL)""")
+old_conn.execute("INSERT INTO vehicles (plate_no, vehicle_type, capacity, status, lat, lon) "
+                  "VALUES ('MIGRATE-01','Van',8,'Available',6.9,79.8)")
+old_conn.commit()
+old_conn.close()
+
+original_db_path = database.DB_PATH
+database.DB_PATH = migrate_test_db
+database.init_db()
+migrated = database.get_vehicles()
+results.append(("Schema migration adds compliance columns without losing data",
+                 "insurance_expiry" in migrated.columns and
+                 migrated.iloc[0]["plate_no"] == "MIGRATE-01"))
+database.DB_PATH = original_db_path
+os.remove(migrate_test_db)
 
 # --- report ---
 print("\n=== BUSINESS LOGIC TEST RESULTS ===")
