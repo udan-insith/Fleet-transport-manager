@@ -680,4 +680,41 @@ def nudge_driver_locations():
             cur.execute("UPDATE drivers SET lat = ?, lon = ? WHERE id = ?",
                         (new_lat, new_lon, row["id"]))
     _touch_backup()
+
+#TRIP FEEDBACK AND DRIVER RATING
+def add_trip_feedback(appointment_id: int, rating: int, comment: str, submitted_by: str):
+    """One feedback entry per appointment (enforced by the UNIQUE constraint
+    on trip_feedback.appointment_id)."""
+    rating = max(1, min(5, int(rating)))
+    with get_cursor(commit=True) as cur:
+        cur.execute(
+            """INSERT INTO trip_feedback (appointment_id, rating, comment, submitted_by, submitted_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (appointment_id, rating, comment, submitted_by,
+             datetime.datetime.now().isoformat(timespec="seconds")),
+        )
+    log_action(submitted_by, "trip_feedback_submitted", f"appointment #{appointment_id}: {rating}/5")
+    _touch_backup()
  
+ 
+def has_feedback(appointment_id: int) -> bool:
+    with get_cursor() as cur:
+        cur.execute("SELECT 1 FROM trip_feedback WHERE appointment_id = ?", (appointment_id,))
+        return cur.fetchone() is not None
+ 
+ 
+def get_driver_rating_summary() -> pd.DataFrame:
+    """Average rating + number of rated trips per driver, for display in
+    Manage Drivers and the Driver Portal."""
+    conn = get_connection()
+    q = """
+    SELECT d.id AS driver_id, d.name AS driver_name,
+           AVG(f.rating) AS avg_rating, COUNT(f.id) AS rated_trips
+    FROM drivers d
+    LEFT JOIN appointments a ON a.driver_id = d.id
+    LEFT JOIN trip_feedback f ON f.appointment_id = a.id
+    GROUP BY d.id, d.name
+    """
+    df = pd.read_sql_query(q, conn)
+    conn.close()
+    return df
