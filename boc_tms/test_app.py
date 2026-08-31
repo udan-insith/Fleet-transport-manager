@@ -22,6 +22,10 @@ ok2 = check(at, "Live GPS Map")
 at.sidebar.radio[0].set_value("Monthly Scheduler").run()
 ok3 = check(at, "Monthly Scheduler")
 
+# Switch to Reports & Analytics
+at.sidebar.radio[0].set_value("Reports & Analytics").run()
+ok3b = check(at, "Reports & Analytics")
+
 # Switch to Transport Officer Portal (logged out state)
 at.sidebar.radio[0].set_value("Transport Officer Portal").run()
 ok4 = check(at, "Transport Officer Portal (logged out)")
@@ -84,4 +88,4 @@ except Exception as e:
     print("[Cross-portal rejection] harness-level error:", e)
     ok10 = False
 
-print("\nALL PASS:", all([ok1, ok2, ok3, ok4, ok5, ok6, ok7, ok8, ok9, ok10]))
+print("\nALL PASS:", all([ok1, ok2, ok3, ok3b, ok4, ok5, ok6, ok7, ok8, ok9, ok10]))
