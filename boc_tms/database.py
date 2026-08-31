@@ -718,3 +718,124 @@ def get_driver_rating_summary() -> pd.DataFrame:
     df = pd.read_sql_query(q, conn)
     conn.close()
     return df
+
+#TRIP REQUESTS
+def add_trip_request(department_id, appt_date, start_time, end_time, purpose, requested_by):
+    with get_cursor(commit=True) as cur:
+        cur.execute(
+            """INSERT INTO trip_requests
+               (department_id, appt_date, start_time, end_time, purpose, status, requested_by, created_at)
+               VALUES (?, ?, ?, ?, ?, 'Pending', ?, ?)""",
+            (department_id, appt_date, start_time, end_time, purpose, requested_by,
+             datetime.datetime.now().isoformat(timespec="seconds")),
+        )
+    log_action(requested_by, "trip_requested", f"department #{department_id}: {appt_date} {start_time}-{end_time}")
+    _touch_backup()
+ 
+ 
+def add_recurring_trip_request(department_id, start_date: str, start_time: str, end_time: str,
+                                purpose: str, requested_by: str, weeks: int) -> int:
+    """
+    Submits `weeks` separate Pending trip_requests, one per week starting
+    at `start_date` (same weekday/time each week). Each is still approved
+    individually by the Transport Officer -- this just saves the
+    requesting department from re-submitting the same weekly trip by hand.
+    Returns the number of requests created.
+    """
+    base = datetime.date.fromisoformat(start_date)
+    created = 0
+    for i in range(max(1, weeks)):
+        occurrence_date = (base + datetime.timedelta(weeks=i)).isoformat()
+        add_trip_request(department_id, occurrence_date, start_time, end_time, purpose, requested_by)
+        created += 1
+    return created
+ 
+ 
+def get_trip_requests(status: str | None = None, department_id: int | None = None) -> pd.DataFrame:
+    conn = get_connection()
+    q = """
+    SELECT r.*, dep.name AS department_name,
+           a.driver_id, d.name AS driver_name, a.vehicle_id, v.plate_no, a.estimated_cost
+    FROM trip_requests r
+    JOIN departments dep ON dep.id = r.department_id
+    LEFT JOIN appointments a ON a.id = r.appointment_id
+    LEFT JOIN drivers d ON d.id = a.driver_id
+    LEFT JOIN vehicles v ON v.id = a.vehicle_id
+    """
+    clauses, params = [], []
+    if status:
+        clauses.append("r.status = ?")
+        params.append(status)
+    if department_id is not None:
+        clauses.append("r.department_id = ?")
+        params.append(department_id)
+    if clauses:
+        q += " WHERE " + " AND ".join(clauses)
+    q += " ORDER BY r.created_at DESC"
+    df = pd.read_sql_query(q, conn, params=params)
+    conn.close()
+    return df
+ 
+ 
+def approve_trip_request(request_id: int, driver_id: int, vehicle_id: int, actor: str | None = None):
+    """Assign a driver+vehicle to a pending request. Runs the same conflict
+    check as a normal booking; on success this creates the appointment and
+    marks the request Approved, atomically (same DB transaction)."""
+    with get_cursor() as cur:
+        cur.execute("SELECT * FROM trip_requests WHERE id = ?", (request_id,))
+        req = cur.fetchone()
+    if req is None:
+        return False, ["Request not found."]
+    if req["status"] != "Pending":
+        return False, [f"Request is already '{req['status']}'."]
+ 
+    conflicts = check_conflict(req["appt_date"], req["start_time"], req["end_time"],
+                                driver_id, vehicle_id)
+    if conflicts:
+        return False, conflicts
+ 
+    estimated_cost = _compute_trip_cost(vehicle_id, req["department_id"])
+ 
+    with get_cursor(commit=True) as cur:
+        cur.execute(
+            """INSERT INTO appointments
+               (appt_date, start_time, end_time, driver_id, vehicle_id, department_id,
+                purpose, status, created_by, created_at, estimated_cost)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?, ?)""",
+            (req["appt_date"], req["start_time"], req["end_time"], driver_id, vehicle_id,
+             req["department_id"], req["purpose"], actor or "Transport Officer (from request)",
+             datetime.datetime.now().isoformat(timespec="seconds"), estimated_cost),
+        )
+        new_appt_id = cur.lastrowid
+        cur.execute(
+            """UPDATE trip_requests SET status = 'Approved', appointment_id = ?, decided_at = ?
+               WHERE id = ?""",
+            (new_appt_id, datetime.datetime.now().isoformat(timespec="seconds"), request_id),
+        )
+    log_action(actor, "trip_request_approved",
+               f"request #{request_id} -> appointment #{new_appt_id} "
+               f"(driver #{driver_id}, vehicle #{vehicle_id})")
+    _touch_backup()
+    return True, []
+ 
+ 
+def reject_trip_request(request_id: int, note: str = "", actor: str | None = None):
+    with get_cursor(commit=True) as cur:
+        cur.execute(
+            """UPDATE trip_requests SET status = 'Rejected', decision_note = ?, decided_at = ?
+               WHERE id = ?""",
+            (note, datetime.datetime.now().isoformat(timespec="seconds"), request_id),
+        )
+    log_action(actor, "trip_request_rejected", f"request #{request_id}: {note}")
+    _touch_backup()
+ 
+ 
+def cancel_trip_request(request_id: int, actor: str | None = None):
+    """Requesting department withdraws its own still-pending request."""
+    with get_cursor(commit=True) as cur:
+        cur.execute(
+            "UPDATE trip_requests SET status = 'Cancelled' WHERE id = ? AND status = 'Pending'",
+            (request_id,),
+        )
+    log_action(actor, "trip_request_cancelled", f"request #{request_id}")
+    _touch_backup()
